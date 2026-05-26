@@ -1,0 +1,17 @@
+{
+  "name": "pipeline-pipes",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-pipe starter for @jahbini/pipeline. Shared model in build/, multiple application pipes under pipes/. Each pipe is its own workspace; the model + venv + UI are shared at the top.",
+  "scripts": {
+    "setup": "./run-first.sh",
+    "model": "./bin/model.sh",
+    "ui": "EXEC=$PWD/node_modules/@jahbini/pipeline coffee ui_server.coffee",
+    "ui:reset": "cp -r ./node_modules/@jahbini/pipeline/ui ./ui && cp ./node_modules/@jahbini/pipeline/ui_server.coffee ./ui_server.coffee && chmod +x ./ui_server.coffee",
+    "pipe:new": "./bin/pipe-new.sh",
+    "clean": "rm -rf .venv build/* pipes/*/state pipes/*/env pipes/*/logs pipes/*/runtime.sqlite* pipes/*/experiment.yaml pipes/*/params pipes/*/tested pipes/*/out pipes/*/data pipes/*/pipeline.json pipes/*/override pipes/*/control_override.yaml pipes/*/.venv && touch build/.gitkeep"
+  },
+  "dependencies": {
+    "@jahbini/pipeline": "git+https://github.com/jahbini/pipeline.git"
+  }
+}

@@ -1,0 +1,58 @@
+# vi
+*.swp
+*.log
+*.err
+*.tar
+*.tgz
+
+ruins
+
+rusty/**/target/
+rusty/**/build/
+rusty/**/out/
+rusty/**/debug/
+rusty/**/release/
+rusty/**/tmp/
+rusty/**/logs/
+rusty/**/mlx_smoke
+metal/*.node
+metal/build/
+
+# Local MLX source checkout (optional dev aid for reading MLX internals;
+# the production build links against system MLX, e.g. Homebrew).
+mlx/
+
+node_modules/
+pipes/
+pnpm-lock.yaml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+env/
+test/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local data & outputs
+build/
+artifacts/
+data/
+data_report.json
+eval_out/
+out/
+logs/
+run*/
+dist/
+TrainTiny/
+params/
+state/
+pipeline.json
+experiment.yaml
+override.yaml
+
+# macOS
+.DS_Store
