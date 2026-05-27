@@ -395,9 +395,33 @@ scanUiFields = (recipe, override, uiControl) ->
   rows.sort (a, b) -> String(a.path).localeCompare String(b.path)
   rows
 
+# Resolve a recipe's config file BASE-first, then EXEC — same precedence as
+# the runner's resolveConfigPath, so the UI reads the SAME recipe the runner
+# will run (a project config/<name>.yaml shadows the package copy).
+resolveConfigPath = (name) ->
+  for root in [BASE, EXEC_ROOT]
+    p = path.join(root, 'config', "#{name}.yaml")
+    return p if fs.existsSync(p)
+  path.join(EXEC_ROOT, 'config', "#{name}.yaml")
+
+# Discover the selectable recipes from the actual config/ dirs (project BASE
+# ∪ package EXEC), instead of a hardcoded list that drifts from reality. Any
+# <name>.yaml in either config/ is offered; BASE shadows EXEC for content.
+discoverRecipes = ->
+  names = new Set()
+  for root in [BASE, EXEC_ROOT]
+    dir = path.join(root, 'config')
+    continue unless fs.existsSync(dir)
+    try
+      for f in fs.readdirSync(dir) when f.endsWith('.yaml')
+        names.add f.slice(0, -('.yaml'.length))
+    catch
+      null
+  Array.from(names).sort()
+
 readRecipe = (pipeline) ->
   return {} unless typeof pipeline is 'string' and pipeline.length
-  readYaml path.join(EXEC_ROOT, 'config', "#{pipeline}.yaml")
+  readYaml resolveConfigPath(pipeline)
 
 pad2 = (n) ->
   text = String(Number(n) ? 0)
@@ -594,18 +618,9 @@ buildControls = ->
     realization: pending.realization ? controlStoryStep.realization ? recipeStoryStep.realization ? ''
     continuous: uiControl.continuous is true
     continuous_delay_seconds: normalizeCooldownSeconds(uiControl.continuous_delay_seconds, 60)
-    pipelines: [
-      'oracle_ite'
-      'lora_ite'
-      'diary_ite'
-      'diary_translate_ite'
-      'prompt_ite'
-      # base_ite omitted: it's the shared include base (run: defaults + artifact
-      # wiring, NO steps) that every _ite recipe pulls in via `include:`. Running
-      # it standalone yields a stepless/"corrupt" pipeline, so it's not a
-      # selectable recipe. story_scan / lora_scan omitted: no config/*.yaml ships
-      # for them in the package, so selecting one would 404 in readRecipe.
-    ]
+    # Discovered from config/ (project BASE ∪ package EXEC) — every recipe that
+    # actually exists is selectable; no hardcoded list to drift out of sync.
+    pipelines: discoverRecipes()
     scene_options: makeOptions 'scenes'
     arrival_options: makeOptions 'characters'
     disturbance_options: makeOptions 'disturbances'
@@ -644,7 +659,7 @@ collectExpectedOutputs = (run) ->
   override = readOverride(pipeline)
   return { out_files: [], diary_files: collectDiaryFiles(run) } unless pipeline?
 
-  configPath = path.join(EXEC_ROOT, 'config', "#{pipeline}.yaml")
+  configPath = resolveConfigPath(pipeline)
   recipe = readYaml(configPath)
   artifacts = recipe?.artifacts ? {}
   runStart = run?.started_at ? null
