@@ -1377,8 +1377,13 @@ handleMergePipe = (req, res) ->
 # `pipeline ui:init` yet. This is what makes the UI a
 # project-customizable surface.
 resolveUiAsset = (rel) ->
-  projectPath = path.join(CWD, 'ui', rel)
-  return projectPath if fs.existsSync(projectPath)
+  # CWD/ui (pipe-local override) → BASE/ui (project-owned UI) → EXEC/ui (package).
+  # The BASE tier is what serves the project's own ui/ after a pipe switch, when
+  # CWD is a pipe dir with no ui/ of its own — without it, resolution skipped
+  # straight to the package copy under node_modules (and 404'd if absent).
+  for root in [CWD, BASE, EXEC_ROOT]
+    candidate = path.join(root, 'ui', rel)
+    return candidate if fs.existsSync(candidate)
   path.join(EXEC_ROOT, 'ui', rel)
 
 server = http.createServer (req, res) ->
