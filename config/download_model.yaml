@@ -1,0 +1,43 @@
+# =====================================================================
+#   download_model.yaml  —  PROJECT override of the package recipe
+# =====================================================================
+#   Uses the ORIGINAL base_ite downloader chain, NOT the package's
+#   HuggingFace-API recipe (model/download_model.coffee):
+#     - download_model → story/hf_download.coffee  (git + git-lfs, no HF
+#       CLI / no Python; retry-hardened, writes .model_provenance.json)
+#     - quantize_model → kag_oracle/quantize_model.coffee  (MLX 4-bit)
+#
+#   resolveConfigPath resolves <BASE>/config/<name>.yaml before the
+#   package copy, so `npm run model -- <org/name>` (which selects
+#   pipeline: download_model and sets download_model.model) runs THIS.
+#
+#   The git+lfs path avoids the HF API 401/auth/cache issues the
+#   package recipe hits (e.g. on the mac-mini).
+#
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts: {}
+
+download_model:
+  run: story/hf_download.coffee
+  depends_on: []
+  needs: []
+  makes: []
+  loraLand: build/model
+
+quantize_model:
+  run: kag_oracle/quantize_model.coffee
+  depends_on: [download_model]
+  needs: []
+  makes: []
+  source_model_dir: build/model
+  quantized_model_dir: build/model4
+  quantized_model_memo_key: quantizedModelDir
+  mlx:
+    quantize: null
+    q-bits: 4

@@ -595,14 +595,16 @@ buildControls = ->
     continuous: uiControl.continuous is true
     continuous_delay_seconds: normalizeCooldownSeconds(uiControl.continuous_delay_seconds, 60)
     pipelines: [
-      'base_ite'
       'oracle_ite'
       'lora_ite'
       'diary_ite'
       'diary_translate_ite'
       'prompt_ite'
-      # story_scan / lora_scan omitted: no config/*.yaml ships for them in the
-      # package, so selecting one would 404 in readRecipe.
+      # base_ite omitted: it's the shared include base (run: defaults + artifact
+      # wiring, NO steps) that every _ite recipe pulls in via `include:`. Running
+      # it standalone yields a stepless/"corrupt" pipeline, so it's not a
+      # selectable recipe. story_scan / lora_scan omitted: no config/*.yaml ships
+      # for them in the package, so selecting one would 404 in readRecipe.
     ]
     scene_options: makeOptions 'scenes'
     arrival_options: makeOptions 'characters'
