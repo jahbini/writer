@@ -1335,7 +1335,18 @@ handleSwitchPipe = (req, res) ->
   uiServerPath = path.join(BASE, 'ui_server.coffee') unless fs.existsSync(uiServerPath)
   uiServerPath = path.join(EXEC_ROOT, 'ui_server.coffee') unless fs.existsSync(uiServerPath)
 
-  launchArgs = ['-lc', "sleep 1; exec coffee #{JSON.stringify(uiServerPath)}"]
+  # Re-assert the critical env vars INSIDE the exec, via `env VAR=val …`. The
+  # `-l` login shell re-sources the user's profile, which can export its own
+  # EXEC (e.g. a dev pipeline checkout) and clobber the env passed to spawn —
+  # that would misresolve EXEC_ROOT/BASE on the relaunched UI. Setting them on
+  # the exec'd process happens AFTER profile sourcing, so they win.
+  reassert = [
+    "EXEC=#{JSON.stringify(EXEC_ROOT)}"
+    "CWD=#{JSON.stringify(targetCwd)}"
+    "UI_PORT=#{JSON.stringify(String(PORT))}"
+    "UI_BIND_MODE=#{JSON.stringify(UI_BIND_MODE)}"
+  ].join(' ')
+  launchArgs = ['-lc', "sleep 1; exec env #{reassert} coffee #{JSON.stringify(uiServerPath)}"]
   child = spawn 'bash', launchArgs,
     cwd: targetCwd
     detached: true
