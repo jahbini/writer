@@ -23,7 +23,6 @@ metal/build/
 mlx/
 
 node_modules/
-pipes/
 pnpm-lock.yaml
 
 # Python
@@ -36,6 +35,12 @@ test/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Ephemeral pipe working dirs — nothing under pipes/ is retained in git.
+# Durable, project-owned content lives at the repo root: config/ (recipes not
+# in node_modules) and scripts/ (scripts not in node_modules), both tracked.
+# Pipe-local scripts/overrides/data/state are override/debug + run artifacts.
+pipes/
 
 # Local data & outputs
 build/

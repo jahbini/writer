@@ -497,6 +497,7 @@
                 <select id="pipe-select"></select>
               </label>
               <button id="switch-pipe-button" type="button">Switch Pipe UI</button>
+              <button id="shutdown-ui-button" type="button">Shutdown UI Server</button>
               <button id="merge-pipe-button" type="button">Merge Adapter And SQLite From Other Machine</button>
               <div id="merge-result" class="hint mono"></div>
               <div id="merge-status" class="hint mono"></div>
@@ -598,6 +599,9 @@
     let humanSaveTimer = null;
     let currentPipeName = '';
     let selectedPipeName = '';
+    // The recipe currently loaded into the controls. Tracked so that when the
+    // user picks a different recipe we know which one's human override to save.
+    let loadedPipeline = '';
     let refreshTimer = null;
 
     function startRefreshLoop() {
@@ -726,6 +730,9 @@
       setupPaneExpanders();
 
       controlsInitialized = true;
+      // Remember which recipe is now loaded, so a subsequent recipe change
+      // can persist THIS recipe's human override before switching away.
+      loadedPipeline = selectedPipeline;
     }
 
 	    function renderPipeControls(pipe) {
@@ -744,7 +751,7 @@
       pipeSelect.value = desired;
       selectedPipeName = desired;
 	      pipeSelect.disabled = pipes.length === 0;
-	      switchButton.disabled = pipes.length === 0 || !desired || desired === current;
+	      switchButton.disabled = false;
 	    }
 
 	    function renderMergeStatus(mergeRun) {
@@ -1177,6 +1184,23 @@
       }
     }
 
+    async function shutdownUi() {
+      const result = byId('launch-result');
+      try {
+        const res = await fetch('/api/shutdown_ui', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || 'shutdown failed');
+        }
+        result.textContent = `UI server (pid ${data.pid}) shutting down — this page is now dead`;
+      } catch (err) {
+        result.textContent = String(err.message || err);
+      }
+    }
+
     async function clearPipelineState() {
       const result = byId('launch-result');
       try {
@@ -1197,16 +1221,11 @@
 
     async function switchPipe() {
       const result = byId('launch-result');
-      const pipe = byId('pipe-select').value;
+      const pipe = byId('pipe-select').value || '';   // empty => restart current workspace in place
       console.debug('[ui] switchPipe:click', {
         selectedPipe: pipe || '',
         currentPipe: currentPipeName || ''
       });
-      if (!pipe) return;
-      if (pipe === currentPipeName) {
-        result.textContent = `already on pipe ${pipe}`;
-        return;
-      }
       try {
         const res = await fetch('/api/switch_pipe', {
           method: 'POST',
@@ -1222,8 +1241,8 @@
         if (!res.ok || !data.ok) {
           throw new Error(data.error || 'switch pipe failed');
         }
-        result.textContent = `switching UI to pipe ${pipe}...`;
-        selectedPipeName = pipe;
+        result.textContent = pipe ? `switching UI to pipe ${pipe}...` : 'restarting UI...';
+        if (pipe) selectedPipeName = pipe;
         window.setTimeout(() => window.location.reload(), 1800);
       } catch (err) {
         result.textContent = String(err.message || err);
@@ -1373,11 +1392,40 @@
     setupPaneExpanders();
 
     refresh().catch(console.error);
-    byId('pipeline-select').addEventListener('change', () => {
-      controlsDirty = true;
-      saveControlState().catch((err) => {
+    byId('pipeline-select').addEventListener('change', async () => {
+      const newPipeline = byId('pipeline-select').value;
+      const oldPipeline = loadedPipeline;
+      try {
+        // 1. Persist the OLD recipe's override into override/<old>.yaml before
+        //    switching away — pass its pipeline explicitly so it lands in the
+        //    right file regardless of what control_override currently says.
+        if (oldPipeline && oldPipeline !== newPipeline) {
+          byId('human-override-status').textContent = `saving override/${oldPipeline}.yaml...`;
+          await fetch('/api/human_override', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pipeline: oldPipeline,
+              human_override_text: byId('human-override-editor').value
+            })
+          });
+        }
+        humanOverrideDirty = false;
+
+        // 2. Switch the selected recipe (updates pending.pipeline + control_override).
+        controlsDirty = true;
+        await saveControlState();
+
+        // 3. Force the new recipe to (re)render: its human override into the
+        //    Human Override window, and its UI fields/dropdowns into the form.
+        controlsInitialized = false;
+        humanOverrideInitialized = false;
+        controlOverrideInitialized = false;
+        loadedPipeline = newPipeline;
+        await refresh();
+      } catch (err) {
         byId('control-override-status').textContent = String(err.message || err);
-      });
+      }
     });
     byId('continuous-checkbox').addEventListener('change', () => {
       controlsDirty = true;
@@ -1422,9 +1470,12 @@
 	    byId('switch-pipe-button').addEventListener('click', () => {
 	      switchPipe().catch(console.error);
 	    });
+	    byId('shutdown-ui-button').addEventListener('click', () => {
+	      shutdownUi().catch(console.error);
+	    });
 	    byId('pipe-select').addEventListener('change', (event) => {
 	      selectedPipeName = event.target.value || '';
-	      byId('switch-pipe-button').disabled = !selectedPipeName || selectedPipeName === currentPipeName;
+	      byId('switch-pipe-button').disabled = false;
 	    });
 		    byId('merge-pipe-button').addEventListener('click', () => {
 		      mergePipe().catch(console.error);

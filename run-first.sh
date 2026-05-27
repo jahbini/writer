@@ -38,7 +38,12 @@ banner() {
 banner "1/3  npm install — pulling @jahbini/pipeline from GitHub"
 npm install
 
-banner "2/3  Setting up shared .venv with MLX"
+banner "2/3  Setting up the venv with MLX at the project base (./.venv)"
+# The venv lives at the project BASE — stable, outside the npm tree.
+# Pipeline steps are CWD-agnostic; the runner's resolvePython() resolves
+# the interpreter from <CWD>/.venv, then <BASE>/.venv, then <EXEC>/.venv,
+# so a single base venv serves every pipe with no per-pipe .venv and
+# nothing venv-related inside the npm-wiped node_modules.
 if [ ! -d .venv ]; then
   python3 -m venv .venv
   .venv/bin/pip install --upgrade pip setuptools wheel
@@ -48,9 +53,9 @@ else
 fi
 
 banner "3/3  Setting up sample pipe at pipes/sample/"
+# No per-pipe .venv: a pipe is a working directory, not an environment.
 mkdir -p pipes/sample build
 cd pipes/sample
-[ -L .venv ] || ln -s ../../.venv .venv
 if [ -f override.yaml ]; then
   mv override.yaml "override.yaml.$(date +%Y-%m-%d_%H-%M-%S).bak"
 fi

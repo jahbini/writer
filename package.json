@@ -2,7 +2,7 @@
   "name": "pipeline-pipes",
   "version": "0.1.0",
   "private": true,
-  "description": "Multi-pipe starter for @jahbini/pipeline. Shared model in build/, multiple application pipes under pipes/. Each pipe is its own workspace; the model + venv + UI are shared at the top.",
+  "description": "Multi-pipe starter for @jahbini/pipeline. Shared model in build/, multiple application pipes under pipes/. Each pipe is a working directory only; the MLX venv lives at the project base (./.venv, resolved via the runner's BASE lookup) and the UI is shared at the top.",
   "scripts": {
     "setup": "./run-first.sh",
     "model": "./bin/model.sh",
@@ -12,6 +12,6 @@
     "clean": "rm -rf .venv build/* pipes/*/state pipes/*/env pipes/*/logs pipes/*/runtime.sqlite* pipes/*/experiment.yaml pipes/*/params pipes/*/tested pipes/*/out pipes/*/data pipes/*/pipeline.json pipes/*/override pipes/*/control_override.yaml pipes/*/.venv && touch build/.gitkeep"
   },
   "dependencies": {
-    "@jahbini/pipeline": "git+https://github.com/jahbini/pipeline.git"
+    "@jahbini/pipeline": "github:jahbini/pipeline"
   }
 }

@@ -36,7 +36,8 @@ if [ -d "$PIPE_DIR" ]; then
 fi
 
 mkdir -p "$PIPE_DIR"
-ln -s ../../.venv "$PIPE_DIR/.venv"
+# No per-pipe .venv: steps resolve their interpreter at <EXEC>/.venv,
+# so a pipe is a working directory only, never an environment.
 
 # Start from the shipped override.test.yaml as the template, then
 # rewrite its `pipeline:` line to whatever the caller asked for.
@@ -46,7 +47,7 @@ sed "s|^pipeline:.*|pipeline: $PIPELINE|" "$PIPE_DIR/override.yaml" > "$PIPE_DIR
 mv "$PIPE_DIR/override.yaml.tmp" "$PIPE_DIR/override.yaml"
 
 echo "Created $PIPE_DIR/"
-echo "  .venv → ../../.venv (symlink to shared venv)"
 echo "  override.yaml — pipeline: $PIPELINE"
+echo "  (no .venv — steps run in the EXEC venv)"
 echo
 echo "Run it: cd $PIPE_DIR && npx pipeline"

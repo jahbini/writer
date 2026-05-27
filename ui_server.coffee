@@ -92,17 +92,28 @@ resolveExecRoot = ->
 
 EXEC_ROOT = resolveExecRoot()
 RUNNER = path.join(EXEC_ROOT, 'pipeline_runner.coffee')
-MERGE_SCRIPT = path.join(EXEC_ROOT, 'merge_sqlite_dbs.coffee')
+# merge_sqlite_dbs.coffee is project-owned (it pulls LoRA results from the
+# remote training box into THIS project's pipes/build). Prefer the BASE copy;
+# fall back to the package only if a project copy isn't present. (BASE is
+# defined just below — resolved the same way; compute it inline here.)
+MERGE_SCRIPT = do ->
+  marker = "#{path.sep}node_modules#{path.sep}"
+  idx = EXEC_ROOT.indexOf(marker)
+  base = if idx isnt -1 then EXEC_ROOT.slice(0, idx) else EXEC_ROOT
+  baseCopy = path.join(base, 'merge_sqlite_dbs.coffee')
+  if fs.existsSync(baseCopy) then baseCopy else path.join(EXEC_ROOT, 'merge_sqlite_dbs.coffee')
 
-# **Multi-pipe layout — PROJECT_ROOT vs EXEC_ROOT.**
-# In pipeline-pipes, `pipes/` lives at the *project* root (where this
-# ui_server.coffee file lives), NOT under the installed package. So
-# PIPES_ROOT is rooted at __dirname, not EXEC_ROOT. The relaunch path
-# (handleSwitchPipe down below) also has to use __dirname so switching
-# pipes keeps using the project-owned ui_server rather than the
-# package's default.
-PROJECT_ROOT = path.dirname(path.resolve(__filename))
-PIPES_ROOT = path.join(PROJECT_ROOT, 'pipes')
+# BASE — the consuming project's root (mirrors the runner's BASE). When
+# installed as an npm package, EXEC_ROOT is `<base>/node_modules/@jahbini/
+# pipeline`; the pipes live at `<base>/pipes`, NOT inside node_modules. So
+# resolve PIPES_ROOT against the project base, falling back to EXEC_ROOT for
+# the monolith layout (runner at the base, no node_modules ancestor).
+BASE = do ->
+  marker = "#{path.sep}node_modules#{path.sep}"
+  idx = EXEC_ROOT.indexOf(marker)
+  if idx isnt -1 then EXEC_ROOT.slice(0, idx) else EXEC_ROOT
+
+PIPES_ROOT = path.join(BASE, 'pipes')
 DEFAULT_KAG_KEYWORDS = [
   'joy'
   'contentment'
@@ -474,10 +485,17 @@ readOverride = (pipelineName = null) ->
   selectedPipeline = String(legacy.pipeline ? '').trim() unless selectedPipeline.length
   selectedPath = overridePathForPipeline selectedPipeline
 
+  # Only seed a new recipe-scoped override from the legacy override.yaml when
+  # the legacy file is actually for THIS recipe (or names no pipeline). The
+  # legacy file holds one pipeline's config; seeding an unrelated recipe from
+  # it would copy e.g. diary_ite's overrides into prompt_ite on a recipe switch.
+  legacyPipeline = String(legacy.pipeline ? '').trim()
+  legacyMatchesSelection = legacyPipeline.length is 0 or legacyPipeline is selectedPipeline
+
   materializedFromLegacy = false
   parsed = if fs.existsSync(selectedPath)
     try yaml.load(fs.readFileSync(selectedPath, 'utf8')) ? {} catch then {}
-  else if fs.existsSync(OVERRIDE_PATH)
+  else if fs.existsSync(OVERRIDE_PATH) and legacyMatchesSelection
     materializedFromLegacy = selectedPipeline.length > 0
     Object.assign {}, legacy
   else
@@ -524,7 +542,12 @@ buildControls = ->
   pipelineName = pending.pipeline ? controlOverride.pipeline ? legacyOverride.pipeline ? ''
   override = readOverride(pipelineName)
   recipe = readRecipe(pipelineName)
-  libraryDoc = readYaml path.join(EXEC_ROOT, 'data', 'jim_story_library.yaml')
+  # The story library is per-pipe data: prefer the active pipe's data/ (CWD),
+  # fall back to EXEC_ROOT for older layouts. (The package has no data/, so a
+  # plain EXEC_ROOT read leaves the scene/arrival dropdowns empty.)
+  cwdLibraryPath = path.join(CWD, 'data', 'jim_story_library.yaml')
+  libraryPath = if fs.existsSync(cwdLibraryPath) then cwdLibraryPath else path.join(EXEC_ROOT, 'data', 'jim_story_library.yaml')
+  libraryDoc = readYaml libraryPath
   library = libraryDoc?.library ? {}
   recipeStoryStep = recipe?.select_story_recipe ? {}
   controlStoryStep = controlOverride?.select_story_recipe ? {}
@@ -571,15 +594,15 @@ buildControls = ->
     realization: pending.realization ? controlStoryStep.realization ? recipeStoryStep.realization ? ''
     continuous: uiControl.continuous is true
     continuous_delay_seconds: normalizeCooldownSeconds(uiControl.continuous_delay_seconds, 60)
-    # **Demo-only dropdown.** This is the *project-owned* ui_server,
-    # so we list only what works out-of-the-box from the package: the
-    # `test` pipeline. To enable more, add their names here AND make
-    # sure the steps they reference have actual scripts available
-    # (either supplied by the project or copied from upstream
-    # writeStory). The `_ite` recipes in the package ship as
-    # templates — see the runner's README for what each needs.
     pipelines: [
-      'test'
+      'base_ite'
+      'oracle_ite'
+      'lora_ite'
+      'diary_ite'
+      'diary_translate_ite'
+      'prompt_ite'
+      # story_scan / lora_scan omitted: no config/*.yaml ships for them in the
+      # package, so selecting one would 404 in readRecipe.
     ]
     scene_options: makeOptions 'scenes'
     arrival_options: makeOptions 'characters'
@@ -886,11 +909,17 @@ writeControlOverrideText = (text) ->
   throw new Error 'control_override.yaml must include pipeline' unless typeof parsed.pipeline is 'string' and parsed.pipeline.trim().length
   parsed
 
-writeHumanOverrideText = (text) ->
+writeHumanOverrideText = (text, pipelineOverride = null) ->
   trimmed = String(text ? '').trim()
   controlOverride = readControlOverride()
   uiControl = readUiControl()
-  pipelineName = String(controlOverride.pipeline ? uiControl?.pending?.pipeline ? readLegacyOverride().pipeline ? '').trim()
+  # An explicit pipeline lets the UI save the OLD recipe's override while
+  # switching away from it (before control_override flips to the new one).
+  explicit = String(pipelineOverride ? '').trim()
+  pipelineName = if explicit.length
+    explicit
+  else
+    String(controlOverride.pipeline ? uiControl?.pending?.pipeline ? readLegacyOverride().pipeline ? '').trim()
   targetPath = overridePathForPipeline pipelineName
   if trimmed.length is 0
     parsed = readOverride(pipelineName)
@@ -1178,6 +1207,17 @@ handleKill = (req, res) ->
     pid: pid
     target_kind: targetKind
 
+# Stop the UI server process itself. A relaunched (Switch Pipe) server is
+# detached + unref'd, so the browser is the only way to reach it; this is the
+# kill switch. Respond first, then exit so the port is freed.
+handleShutdownUi = (req, res) ->
+  stopRepeatLoop()
+  sendJson res, 200,
+    ok: true
+    pid: process.pid
+    shutting_down: true
+  setTimeout((-> process.exit(0)), 150)
+
 handleControl = (req, res) ->
   bodyText = await readRequestBody req
   payload = {}
@@ -1242,7 +1282,8 @@ handleHumanOverride = (req, res) ->
     return sendJson res, 400, { ok: false, error: 'invalid json body' }
 
   text = if typeof payload.human_override_text is 'string' then payload.human_override_text else ''
-  override = writeHumanOverrideText text
+  pipelineTarget = if typeof payload.pipeline is 'string' and payload.pipeline.trim().length then payload.pipeline else null
+  override = writeHumanOverrideText text, pipelineTarget
   sendJson res, 200,
     ok: true
     override: override
@@ -1267,12 +1308,12 @@ handleSwitchPipe = (req, res) ->
     return sendJson res, 400, { ok: false, error: 'invalid json body' }
 
   pipeName = String(payload.pipe ? '').trim()
-  return sendJson(res, 400, { ok: false, error: 'pipe is required' }) unless pipeName.length
-  return sendJson(res, 400, { ok: false, error: 'invalid pipe name' }) if pipeName.includes('/') or pipeName.includes(path.sep) or pipeName is '.' or pipeName is '..'
-
-  targetCwd = path.join(PIPES_ROOT, pipeName)
-  return sendJson(res, 404, { ok: false, error: 'pipe directory not found' }) unless fs.existsSync(targetCwd) and fs.statSync(targetCwd).isDirectory()
-  return sendJson(res, 200, { ok: true, pipe: pipeName, cwd: targetCwd, unchanged: true }) if path.resolve(targetCwd) is path.resolve(CWD)
+  if pipeName.length
+    return sendJson(res, 400, { ok: false, error: 'invalid pipe name' }) if pipeName.includes('/') or pipeName.includes(path.sep) or pipeName is '.' or pipeName is '..'
+    targetCwd = path.join(PIPES_ROOT, pipeName)
+    return sendJson(res, 404, { ok: false, error: 'pipe directory not found' }) unless fs.existsSync(targetCwd) and fs.statSync(targetCwd).isDirectory()
+  else
+    targetCwd = CWD          # empty pipe => restart current workspace in place
 
   fs.mkdirSync path.join(targetCwd, 'state'), { recursive: true }
   fs.mkdirSync path.join(targetCwd, 'logs'), { recursive: true }
@@ -1283,9 +1324,18 @@ handleSwitchPipe = (req, res) ->
     cwd: targetCwd
     restarting: true
 
-  # Relaunch the *project-owned* ui_server (this file), not the
-  # package's default — so customizations survive a pipe switch.
-  launchArgs = ['-lc', "sleep 1; exec coffee #{JSON.stringify(path.join(PROJECT_ROOT, 'ui_server.coffee'))}"]
+  # Relaunch a ui_server.coffee, preferring the most project-owned one so the
+  # project's UI fixes survive a pipe switch:
+  #   1. the pipe's own ui_server.coffee (rare), then
+  #   2. the project BASE ui_server.coffee (this file — the customized one), then
+  #   3. the shipped package copy under EXEC_ROOT (last resort).
+  # Falling straight to EXEC_ROOT (the old behavior) silently swapped in the
+  # package's stock UI after every switch, dropping all project customizations.
+  uiServerPath = path.join(targetCwd, 'ui_server.coffee')
+  uiServerPath = path.join(BASE, 'ui_server.coffee') unless fs.existsSync(uiServerPath)
+  uiServerPath = path.join(EXEC_ROOT, 'ui_server.coffee') unless fs.existsSync(uiServerPath)
+
+  launchArgs = ['-lc', "sleep 1; exec coffee #{JSON.stringify(uiServerPath)}"]
   child = spawn 'bash', launchArgs,
     cwd: targetCwd
     detached: true
@@ -1383,6 +1433,11 @@ server = http.createServer (req, res) ->
         error: String(err?.message ? err)
   if url is '/api/kill' and req.method is 'POST'
     return Promise.resolve(handleKill(req, res)).catch (err) ->
+      sendJson res, 500,
+        ok: false
+        error: String(err?.message ? err)
+  if url is '/api/shutdown_ui' and req.method is 'POST'
+    return Promise.resolve(handleShutdownUi(req, res)).catch (err) ->
       sendJson res, 500,
         ok: false
         error: String(err?.message ? err)
