@@ -10,16 +10,21 @@
 #   package's stepless copy, so selecting base_ite runs THIS. No other
 #   recipe `include:`s base_ite, so these steps don't bleed into them.
 #
-#   NOTE on the model path: build/model + build/model4 are CWD-relative.
-#   Run base_ite from the project root (BASE) to populate the SHARED
-#   build/model4 that pipes reference via ../../build/model4.
+#   MODEL IS PROJECT-LEVEL (one model per project, shared by all pipes).
+#   base_ite runs INSIDE a pipe (seed_story_sqlite needs the pipe's data/),
+#   so its model steps target the shared project build/ via ../../ — the
+#   same location diary/prompt reference (../../build/model4). The model is
+#   downloaded once into the project build/ regardless of which pipe runs
+#   base_ite; hf_download is idempotent (provenance-checked) so re-runs skip.
+#   Per-pipe content is for the pipe's own experiments (e.g. rusty/gypsy
+#   supporting files), NOT the model.
 #
 run:
   model: Qwen/Qwen3-4B-Instruct-2507
   output_dir: out
   data_dir: data
-  training_dir: build/train
-  loraLand: build/model
+  training_dir: ../../build/train
+  loraLand: ../../build/model
   debug_s: false
   debug_mlx: false
   debug_sql: false
@@ -41,7 +46,7 @@ download_model:
   depends_on: [reset_base_environment_ite]
   needs: []
   makes: []
-  loraLand: build/model
+  loraLand: ../../build/model
 
 quantize_model:
   debug_s: true
@@ -49,8 +54,8 @@ quantize_model:
   depends_on: [download_model]
   needs: []
   makes: []
-  source_model_dir: build/model
-  quantized_model_dir: build/model4
+  source_model_dir: ../../build/model
+  quantized_model_dir: ../../build/model4
   quantized_model_memo_key: quantizedModelDir
   mlx:
     quantize: null

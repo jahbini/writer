@@ -36,6 +36,10 @@ test/
 # Jupyter
 .ipynb_checkpoints/
 
+# Project-level shared runtime DB and its backups (churning binary).
+runtime.sqlite
+runtime.sqlite.backup-*
+
 # Ephemeral pipe working dirs — nothing under pipes/ is retained in git.
 # Durable, project-owned content lives at the repo root: config/ (recipes not
 # in node_modules) and scripts/ (scripts not in node_modules), both tracked.

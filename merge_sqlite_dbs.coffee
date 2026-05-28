@@ -3,14 +3,15 @@
 #   merge_sqlite_dbs.coffee  —  pull LoRA training results from a remote
 #   (the mac-mini training box) into this project.
 # =====================================================================
-#   Ported from writeStory. Adapted to the pipeline-pipes layout:
-#     - BASE (the project root, where pipes/ and build/ live) is resolved
-#       from the EXEC env the UI passes, NOT process.cwd() (the UI spawns
-#       this with cwd = EXEC_ROOT under node_modules).
-#     - the local adapter target is the SHARED build/adapter at BASE
-#       (every pipe resolves the model/adapter there via ../../), not a
-#       per-pipe build/adapter.
-#     - the local DB is the pipe's own runtime.sqlite under pipes/<pipe>/.
+#   Layout (asymmetric, by design):
+#     server (trainer, e.g. mac-mini)  — PER-PIPE: pipes/<pipe>/runtime.sqlite,
+#       pipes/<pipe>/build/adapter. The trainer pipe owns its training output.
+#     receiver (laptop)  — PROJECT-LEVEL SHARED: BASE/runtime.sqlite and
+#       BASE/build/adapter. All pipes on the receiver share these common
+#       resources (different algorithms, same db + adapter).
+#     BASE (the project root, where pipes/ and build/ live) is resolved from
+#       the EXEC env the UI passes, NOT process.cwd() (the UI spawns this
+#       with cwd = EXEC_ROOT under node_modules).
 #
 #   Authority policy (unchanged): the local machine is authoritative for
 #   stories / KAG; the remote contributes ONLY the lora_* tables and the
@@ -37,22 +38,28 @@ printUsage = ->
 usage:
   coffee merge_sqlite_dbs.coffee [options]
 
+layout:
+  server (trainer)  — PER-PIPE:    <remote-base>/pipes/<pipe>/{runtime.sqlite, build/adapter}
+  receiver (laptop) — PROJECT-LEVEL SHARED: <BASE>/{runtime.sqlite, build/adapter}
+  pipes on the receiver consume the shared db + adapter (different algorithms,
+  same common resources).
+
 optional:
-  --pipe NAME                      pipe name (local pipes/<NAME>, and remote)
-  --local-pipe NAME                local pipe name under <BASE>/pipes
+  --pipe NAME                      pipe name on the server (trainer side)
+  --local-pipe NAME                ignored; local is always shared at BASE
   --remote-pipe NAME               remote pipe name under <remote-base>/pipes
   --remote-host HOST               default: mac-mini.local
   --remote-user USER               default: theaiguy
   --remote-base PATH               remote project root (default: /Users/<user>/writediary)
-  --remote-db PATH                 overrides the derived remote runtime.sqlite
-  --remote-adapter-dir PATH        overrides the derived remote build/adapter
-  --local-db PATH                  default: <BASE>/pipes/<pipe>/runtime.sqlite
-  --local-adapter-dir PATH         default: <BASE>/build/adapter  (SHARED)
+  --remote-db PATH                 default: <remote-base>/pipes/<pipe>/runtime.sqlite
+  --remote-adapter-dir PATH        default: <remote-base>/pipes/<pipe>/build/adapter
+  --local-db PATH                  default: <BASE>/runtime.sqlite  (SHARED)
+  --local-adapter-dir PATH         default: <BASE>/build/adapter   (SHARED)
   --dry-run
 
 authority policy:
-  local keeps: stories, story_parts, expanded_story_parts, kag_entries
-  remote/mac-mini contributes only: lora_story_usage, lora_training_runs,
+  receiver keeps: stories, story_parts, expanded_story_parts, kag_entries
+  server contributes only: lora_story_usage, lora_training_runs,
   lora_training_run_stories, lora_trained_stories, and build/adapter
 """
 
@@ -113,23 +120,24 @@ validatePipeName = (label, value) ->
 localPipeName = validatePipeName 'local pipe name', localPipeName
 remotePipeName = validatePipeName 'remote pipe name', remotePipeName
 
-# --- LOCAL paths (this project's layout): per-pipe DB, SHARED adapter at BASE.
-unless opts.localDb?
-  if localPipeName?
-    opts.localDb = path.join BASE, 'pipes', localPipeName, 'runtime.sqlite'
-  else if process.env.CWD?
-    opts.localDb = path.join process.env.CWD, 'runtime.sqlite'
-  else
-    throw new Error 'no --local-db and no --pipe/CWD to derive it from'
+# --- LOCAL (receiver) paths: PROJECT-LEVEL SHARED.
+#     One project = one runtime.sqlite + one build/adapter, both at BASE.
+#     All pipes consume these common resources (recipes read CWD/runtime.sqlite
+#     via a pipe-local symlink → ../../runtime.sqlite; the diary recipe loads
+#     ../../build/adapter). The merge target is the shared pair, NOT per-pipe.
+opts.localDb ?= path.join BASE, 'runtime.sqlite'
 opts.localAdapterDir ?= path.join BASE, 'build', 'adapter'
 
-# --- REMOTE paths: configure for the mac-mini when wired. Derived from
-#     --remote-base (the remote project root) + pipe, unless given explicitly.
+# --- REMOTE (server / trainer) paths: PER-PIPE.
+#     The trainer pipe (e.g. mac-mini's pipes/diary) produces its own
+#     runtime.sqlite (lora_* rows) and build/adapter under itself; the merge
+#     ferries them to the receiver's shared spots.
 opts.remoteBase ?= "/Users/#{opts.remoteUser}/writediary"
 if remotePipeName?
   opts.remoteDb ?= path.join opts.remoteBase, 'pipes', remotePipeName, 'runtime.sqlite'
-opts.remoteAdapterDir ?= path.join opts.remoteBase, 'build', 'adapter'
+  opts.remoteAdapterDir ?= path.join opts.remoteBase, 'pipes', remotePipeName, 'build', 'adapter'
 throw new Error 'no --remote-db and no --remote-pipe to derive it from' unless opts.remoteDb?
+throw new Error 'no --remote-adapter-dir and no --remote-pipe to derive it from' unless opts.remoteAdapterDir?
 
 remoteSpec = if opts.remoteUser? then "#{opts.remoteUser}@#{opts.remoteHost}" else opts.remoteHost
 localDbPath = path.resolve opts.localDb
