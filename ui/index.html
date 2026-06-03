@@ -430,7 +430,7 @@
   <div class="wrap">
     <div class="hero">
       <div>
-        <h1>Pipeline Monitor</h1>
+        <h1 id="page-title">Pipeline Monitor</h1>
         <div id="subtitle" class="mono"></div>
       </div>
       <div id="run-status" class="status">unknown</div>
@@ -937,6 +937,15 @@
         mergePid: mergeRun.pid || null
       });
       byId('subtitle').textContent = `${pipe.current || ''}  ${run.pipeline || ''}  ${run.hh_mm || ''}  ${run.logdir || ''}`.trim();
+      // "Pipeline Monitor for <project-dir> (<pipe>)". The parenthesized
+      // pipe is omitted entirely when no pipe is active (e.g. the UI is
+      // running at the project root), so the title degrades to
+      // "Pipeline Monitor for <project-dir>".
+      const titleBase = pipe.base_dir || '';
+      const titlePipe = pipe.current ? ` (${pipe.current})` : '';
+      const titleStr = `Pipeline Monitor for ${titleBase}${titlePipe}`.trim();
+      byId('page-title').textContent = titleStr;
+      document.title = titleStr;
       const status = run.status || 'unknown';
       const mergeStatus = mergeRun.status || '';
       // Poll while EITHER the pipeline OR a merge is active. Without the

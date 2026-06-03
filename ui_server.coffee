@@ -208,6 +208,9 @@ buildPipeSummary = ->
     root: PIPES_ROOT
     current: current
     workspace: CWD
+    # Basename of the project root — feeds the window/page title
+    # "Pipeline Monitor for <base_dir> <current>" in the client.
+    base_dir: path.basename(BASE)
     pipes: pipes
   }
 
@@ -392,8 +395,32 @@ scanUiFields = (recipe, override, uiControl) ->
       walk value, currentPath
 
   walk recipe
-  rows.sort (a, b) -> String(a.path).localeCompare String(b.path)
-  rows
+
+  # Group diary event fields by event kind so each event renders as
+  # `select_story_recipe.<kind>` immediately followed by
+  # `collect_diary_kag_ite.<kind>_emotion` (recipe-declared step order is
+  # `select_story_recipe` before `collect_diary_kag_ite`, so within a kind
+  # the story selection naturally precedes the emotion). Non-event fields
+  # render first in their original recipe order. Mirrors writeStory's
+  # scanUiFields ordering — this is the documented diary control layout.
+  eventOrder = ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
+  kindFor = (rowPath) ->
+    tail = String(rowPath ? '').split('.').pop() ? ''
+    for kind in eventOrder
+      return kind if tail is kind or tail is "#{kind}_emotion"
+    null
+
+  unkinned = []
+  kinned = []
+  for row, idx in rows
+    kind = kindFor row.path
+    if kind?
+      kinned.push { row, idx, kindIndex: eventOrder.indexOf(kind) }
+    else
+      unkinned.push row
+  kinned.sort (a, b) ->
+    if a.kindIndex isnt b.kindIndex then a.kindIndex - b.kindIndex else a.idx - b.idx
+  unkinned.concat(entry.row for entry in kinned)
 
 # Resolve a recipe's config file BASE-first, then EXEC — same precedence as
 # the runner's resolveConfigPath, so the UI reads the SAME recipe the runner

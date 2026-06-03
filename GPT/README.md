@@ -42,7 +42,9 @@ Rules:
   `source .venv/bin/activate`.
 
 Current repository assumptions worth preserving:
-- the repo is pipe-centric; active workspaces live under `pipes/<organization>_<model>/`
+- the repo is pipe-centric; active workspaces live under `pipes/<pipe>/`
+  (writediary uses short names like `pipes/diary`; older writeStory used
+  `pipes/<organization>_<model>/`)
 - **the runner's `CWD` is the pipe directory, `pipes/<pipe>/`. Run-state
   and run-config files are resolved relative to `CWD`, NOT the repo
   base.** So the operative files are:
@@ -50,11 +52,47 @@ Current repository assumptions worth preserving:
   - `pipes/<pipe>/experiment.yaml`
   - `pipes/<pipe>/control_override.yaml`
   - `pipes/<pipe>/{state,out,params,data,runtime}/`
-  The same-named files in the repo BASE directory
-  (`/writeStory/override.yaml`, `/writeStory/experiment.yaml`, etc.) are
-  meaningless stale leftovers — do not read or write them. Only
-  `config/`, the runner, `ui_server.coffee`, `scripts/`, `agents/`, and
-  `GPT/` live at the repo base and are shared across pipes.
+- **writediary is an npm-extracted layout**: the runner + bundled
+  recipes/scripts live under `node_modules/@jahbini/pipeline/` (the runner
+  calls this `EXEC`). It is wiped by `npm install`. The project root —
+  `BASE` — is the dir that contains that `node_modules/`. The runner
+  resolves scripts as `[CWD, BASE, EXEC]/scripts/<ref>` and recipes as
+  `[BASE, EXEC]/config/<name>.yaml` (project shadows package). `ui_server`
+  mirrors this for its own asset lookups (`resolveUiAsset` adds the BASE
+  tier, `PIPES_ROOT = BASE/pipes`).
+- the BASE shared set (committed unless noted): `config/` (project recipe
+  overrides), `scripts/` (project-shared step scripts not bundled in the
+  package — e.g. `story/`, `kag_oracle/`, `kag_oracle_ite/`, plus any
+  project copies of `diary_ite/*` that shadow the package), `ui_server.coffee`,
+  `ui/`, `merge_sqlite_dbs.coffee`, `bin/`, `run-first.sh`, `package.json`,
+  `.gitignore`, `GPT/`. Gitignored shared (regenerable but lives at BASE):
+  `.venv/`, `build/` (shared model + adapter), `runtime.sqlite` (the shared
+  DB — see asymmetric architecture below), `node_modules/`.
+- **asymmetric server/receiver architecture (2026-05-28 directive)**:
+  - **server** (trainer, e.g. mac-mini) is PER-PIPE — `pipes/<pipe>/runtime.sqlite`
+    and `pipes/<pipe>/build/adapter` (the trainer pipe owns its training output).
+  - **receiver** (laptop) is PROJECT-LEVEL SHARED — `BASE/runtime.sqlite` and
+    `BASE/build/adapter`. All receiver pipes consume these common resources
+    (different algorithms, same db + adapter). A receiver pipe carries a
+    symlink `pipes/<pipe>/runtime.sqlite → ../../runtime.sqlite` so recipes'
+    `CWD/runtime.sqlite` reads transparently follow to the shared DB.
+  - the merge button (`merge_sqlite_dbs.coffee`) ferries server per-pipe →
+    receiver shared: scp's `<remote-base>/pipes/<pipe>/runtime.sqlite` and
+    rsyncs `<remote-base>/pipes/<pipe>/build/adapter` into `BASE/runtime.sqlite`
+    + `BASE/build/adapter`, with timestamped backups. Local stays authoritative
+    for `stories` / `kag_entries` / `story_parts`; only the four `lora_*`
+    tables + the adapter come over.
+- `pipes/*` is otherwise fully ephemeral and gitignored — `data/`, `state/`,
+  `out/`, `logs/`, `params/`, `override.yaml`, `override/<recipe>.yaml`,
+  `experiment.yaml`, `control_override.yaml`, `pipeline.json`, plus any
+  pipe-local `scripts/` override seam. Nothing under `pipes/` is retained
+  in git. A keeper experiment graduates into a `BASE/config/` recipe rather
+  than being kept as a pipe override.
+- the same-named files in the repo BASE directory (`BASE/override.yaml`,
+  `BASE/experiment.yaml`) — when they appear — are stale leftovers from
+  `npm run model` (which writes a temporary project-root `override.yaml`
+  selecting the `download_model` recipe). Recipes that run inside pipes
+  must not read them.
 - the `_ite` recipes are the production covering set of capabilities. Recipes
   without the `_ite` suffix (e.g. `full`, `story`, `train_lora`,
   `train_markdown`, `dialog_reword`, `kag_oracle`, `story_kag_chat`, `test`)
