@@ -5,13 +5,12 @@
     # Params with mlx-lm's own defaults as fallback so an under-specified
     # override still produces a valid config. Each is overridable per pipe
     # in override/lora_ite.yaml under the `build_lora_config_ite:` block.
-    rank    = Number M.getStepParam(stepName, 'rank')    ? 8
-    scale   = Number M.getStepParam(stepName, 'scale')   ? 20.0
-    dropout = Number M.getStepParam(stepName, 'dropout') ? 0.0
-
-    throw new Error "[#{stepName}] rank must be a positive integer" unless Number.isFinite(rank) and rank > 0
-    throw new Error "[#{stepName}] scale must be a positive number" unless Number.isFinite(scale) and scale > 0
-    throw new Error "[#{stepName}] dropout must be in [0,1)" unless Number.isFinite(dropout) and dropout >= 0 and dropout < 1
+    # No prescreens (per CONVENTIONS): a bad value falls naturally through
+    # the yaml writer / mlx-lm's config parser, where the real trace tells
+    # us what was actually wrong.
+    rank    = M.getStepParam(stepName, 'rank')    ? 8
+    scale   = M.getStepParam(stepName, 'scale')   ? 20.0
+    dropout = M.getStepParam(stepName, 'dropout') ? 0.0
 
     # Match the structure mlx_lm/lora.py's `-c/--config` consumes:
     # lora_parameters: { rank, scale, dropout }. Anything else here would
