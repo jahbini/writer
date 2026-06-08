@@ -20,18 +20,26 @@ Why this exists:
   Python anyway, so the project channels its `--config` mechanism
   through a proper DAG step rather than a bespoke wrapper.
 
-Inputs (params):
+Inputs (params, via `L.param`):
 - `rank` (default 8) — LoRA rank.
 - `scale` (default 20.0) — multiplier inside the LoRA layer (NOT
   PEFT alpha/rank; do not "fix" to 2.0).
-- `dropout` (default 0.0) — adapter dropout, must be in [0, 1).
+- `dropout` (default 0.0) — adapter dropout.
 
 Outputs:
-- Memo artifact `lora_config` — the YAML object
-  `{lora_parameters: {rank, scale, dropout}}`.
-- The recipe's `artifacts.lora_config.target` is the file the runner
-  serializes it to. Convention: `data/lora_config.yaml` (CWD-relative,
-  pipe-local).
+- Memo artifact `lora_config` — published with `L.make 'lora_config',
+  config`. The YAML object is `{lora_parameters: {rank, scale, dropout}}`.
+- The file on disk is written by the **meta architecture**, NOT the
+  step. The runner's `materializeArtifact` routes the published value
+  through `M.saveThis(target, value)`; the artifact's `target` ends in
+  `.yaml`, so `meta/yaml.coffee` (rule `/\.yaml$/`) fires and writes
+  `<CWD>/<target>` via `yaml.dump(value)`. The step deliberately does
+  NOT `require 'fs'` or `require 'js-yaml'` — that work belongs to the
+  meta device.
+- Convention: the recipe's `artifacts.lora_config.target` is
+  `data/lora_config.yaml`, and the override's
+  `run_lora_train_ite.mlx.config` is the same path. The step itself
+  carries no path — it just publishes the structured value.
 
 Wiring (in `pipes/<pipe>/override/lora_ite.yaml` on the trainer):
 - add the artifact, the step block, and the path under `run_lora_train_ite.mlx.config`.
