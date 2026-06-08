@@ -1,0 +1,54 @@
+# =====================================================================
+#   override/lora_ite.yaml — project-level override (BASE/override/)
+# =====================================================================
+#   Deep-merged onto the package recipe `lora_ite.yaml`.
+#
+#   Adds `build_lora_config_ite` so the LoRA rank/scale/dropout — which
+#   mlx_lm.lora does NOT expose as CLI flags — can be set via mlx-lm's
+#   own `-c/--config` YAML mechanism. The new step writes the YAML; the
+#   training step picks it up via `mlx: config: <path>`.
+#
+#   See GPT/lora_ite/build_lora_config_ite.md for the step contract.
+#
+pipeline: lora_ite
+
+# 1. Artifact: the on-disk file mlx-lm consumes via --config.
+artifacts:
+  lora_config:
+    target: data/lora_config.yaml
+
+# 2. New step — writes data/lora_config.yaml from rank/scale/dropout
+#    params. Edit the three numbers here to tune (this is the ONLY
+#    place to set scale).
+build_lora_config_ite:
+  run: lora_ite/build_lora_config_ite.coffee
+  depends_on: []
+  needs: []
+  makes: [lora_config]
+  rank: 8
+  scale: 16.0          # mlx-lm default is 20.0; lower this to soften the adapter
+  dropout: 0.0
+
+# 3. Wire the config file into training. Note the `config:` value MUST
+#    match the artifact target above. Do NOT add a `lora_parameters:`
+#    key here — that's what the --config file is for, and putting one
+#    in this mlx: block would emit `--lora_parameters [object Object]`
+#    and fail argparse.
+run_lora_train_ite:
+  depends_on: [build_lora_dataset_ite, build_lora_config_ite]
+  needs:
+    - lora_cycle_state
+    - selected_story_ids
+    - train_rows
+    - valid_rows
+    - test_rows
+    - lora_config
+  mlx:
+    config: data/lora_config.yaml
+    num-layers: 8
+    batch-size: 1
+    iters: 20
+    learning-rate: 0.00001
+    max-seq-length: 2048
+    save-every: 25
+    val-batches: 25
