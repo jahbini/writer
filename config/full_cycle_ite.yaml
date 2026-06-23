@@ -28,7 +28,10 @@ run:
   model: Qwen/Qwen3-4B-Instruct-2507
   output_dir: out
   data_dir: data
-  training_dir: '{BASE}/build/train'
+  # Training data is pipe-local on the server (per asymmetric architecture
+  # — trainer pipe owns its training output). Stays CWD-relative.
+  training_dir: build/train
+  # Base model is shared at project level; substituteBraces fires at L.param.
   loraLand: '{BASE}/build/model'
   debug_s: false
   debug_mlx: false
@@ -61,12 +64,14 @@ artifacts:
     target: out/lora_remaining_count.json
   selected_story_ids:
     target: out/selected_story_ids.json
+  # Artifact targets are NOT run through substituteBraces (only L.param is).
+  # These are pipe-local on the server anyway, so leave them CWD-relative.
   train_rows:
-    target: '{BASE}/build/train/train.jsonl'
+    target: build/train/train.jsonl
   valid_rows:
-    target: '{BASE}/build/train/valid.jsonl'
+    target: build/train/valid.jsonl
   test_rows:
-    target: '{BASE}/build/train/test.jsonl'
+    target: build/train/test.jsonl
   lora_stdout:
     target: out/lora_train.txt
   lora_run_record:
@@ -218,8 +223,11 @@ run_lora_train_ite:
   needs: [lora_cycle_state, selected_story_ids, train_rows, valid_rows, test_rows]
   makes: [lora_stdout, lora_run_record]
   test_only: false
-  adapter_path: '{BASE}/build/adapter'
-  resume_adapter_file: '{BASE}/build/adapter/adapters.safetensors'
+  # Per asymmetric architecture, server's trained adapter is pipe-local.
+  # The merge button later ferries pipes/<pipe>/build/adapter to the
+  # receiver's shared BASE/build/adapter.
+  adapter_path: build/adapter
+  resume_adapter_file: build/adapter/adapters.safetensors
   mlx:
     batch-size: 1
     iters: 20
@@ -287,7 +295,9 @@ generate_diary_with_adapter_ite:
   depends_on: [build_diary_prompt_ite]
   needs: [story_parts, diary_prompt_text]
   makes: [diary_adapted_raw, diary_adapted_meta, diary_adapted_text]
-  adapter_path: '{BASE}/build/adapter'
+  # Adapter is pipe-local on the server (just written by run_lora_train_ite
+  # in this same pipe). Model4 is shared at BASE.
+  adapter_path: build/adapter
   quantized_model_dir: '{BASE}/build/model4'
   mlx:
     max-tokens: 2000
@@ -306,7 +316,8 @@ generate_ablations_ite:
   needs: []
   makes: [ablations]
   quantized_model_dir: '{BASE}/build/model4'
-  adapter_path: '{BASE}/build/adapter'
+  # Same as the diary step above — adapter pipe-local, model4 shared.
+  adapter_path: build/adapter
   max_tokens: 160
   temp: 0.7
   # Generic defaults — override per pipe for meaningful scoring.
