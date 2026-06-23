@@ -1,0 +1,339 @@
+# =====================================================================
+#   full_cycle_ite.yaml  —  base → oracle → lora → diary (with adapter) +
+#                            adapter quality eval (judge_run_ite verdict)
+# =====================================================================
+#
+#   Soup-to-nuts: prepare base model + DB, populate KAG via oracle, train
+#   the LoRA adapter, generate one diary using that adapter, and score
+#   the adapter against eval_prompts. Two terminal artifacts:
+#     - diary_adapted_text (the diary)
+#     - eval_score        (the judge's better/worse/unchanged verdict)
+#
+#   Inlined from base_ite (project) + oracle_ite + lora_ite + diary_ite +
+#   eval_ite. Sub-recipe step bodies are copied verbatim; the chaining is
+#   in the cross-recipe `depends_on:` edges (commented at each seam).
+#
+#   Paths use {BASE}/build/... for shared model+adapter+training (one
+#   model per project; pipes share it via the runner's substituteBraces
+#   at L.param read time). CWD-relative paths stay implicit for pipe
+#   inputs (data/jim.md, data/jim_story_library.yaml).
+#
+#   Per-pipe override surface lives in override/full_cycle_ite.yaml. The
+#   eval_prompts default below is the package-generic set; override per
+#   pipe with prompts matched to the training corpus's domain (the
+#   eval_ite contract documents N=20 as the rough threshold for stable
+#   verdicts; the 5 defaults are smoke-test scale).
+
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+  training_dir: '{BASE}/build/train'
+  loraLand: '{BASE}/build/model'
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+# Artifacts from all five sub-recipes. No name conflicts; targets stay
+# pipe-local (out/, eval_out/) except for build/train/* which the LoRA
+# dataset writes into the shared project build via {BASE}.
+artifacts:
+  # base_ite (project bootstrap chain)
+  stories_md:
+    source: data/jim.md
+  story_seed_ids:
+    target: out/story_seed_ids.json
+
+  # oracle_ite
+  new_story_ids:
+    target: out/new_story_ids.json
+  oracle_remaining_count:
+    target: out/oracle_remaining_count.json
+  kag_rejects:
+    target: out/rejects.jsonl
+  kag_viewed:
+    target: out/viewed.jsonl
+
+  # lora_ite
+  lora_cycle_state:
+    target: out/lora_cycle_state.json
+  lora_remaining_count:
+    target: out/lora_remaining_count.json
+  selected_story_ids:
+    target: out/selected_story_ids.json
+  train_rows:
+    target: '{BASE}/build/train/train.jsonl'
+  valid_rows:
+    target: '{BASE}/build/train/valid.jsonl'
+  test_rows:
+    target: '{BASE}/build/train/test.jsonl'
+  lora_stdout:
+    target: out/lora_train.txt
+  lora_run_record:
+    target: out/lora_run_record.json
+  trained_story_ids:
+    target: out/trained_story_ids.json
+
+  # diary_ite
+  story_library:
+    target: out/story_library.json
+  story_recipe:
+    target: out/story_recipe.json
+  story_parts:
+    target: out/story_parts.json
+  diary_kag:
+    target: out/diary_kag.json
+  diary_prompt_text:
+    target: out/diary_prompt.txt
+  diary_adapted_raw:
+    target: out/diary_adapted_raw.txt
+  diary_adapted_meta:
+    target: out/diary_adapted_meta.json
+  diary_adapted_text:
+    target: out/diary_adapted.txt
+
+  # eval_ite
+  ablations:
+    target: eval_out/ablations.jsonl
+  ablation_summary:
+    target: eval_out/ablation_summary.json
+  voice_similarity:
+    target: eval_out/voice_similarity.json
+  eval_score:
+    target: eval_out/eval_score.json
+
+# ---------------------------------------------------------------------
+# base_ite (project bootstrap)
+# ---------------------------------------------------------------------
+
+reset_base_environment_ite:
+  run: story/reset_base_environment_ite.coffee
+  depends_on: []
+  needs: []
+  makes: []
+
+download_model:
+  run: story/hf_download.coffee
+  depends_on: [reset_base_environment_ite]
+  needs: []
+  makes: []
+  loraLand: '{BASE}/build/model'
+
+quantize_model:
+  run: kag_oracle/quantize_model.coffee
+  depends_on: [download_model]
+  needs: []
+  makes: []
+  source_model_dir: '{BASE}/build/model'
+  quantized_model_dir: '{BASE}/build/model4'
+  quantized_model_memo_key: quantizedModelDir
+  mlx:
+    quantize: null
+    q-bits: 4
+
+seed_story_sqlite:
+  run: kag_oracle_ite/seed_story_sqlite.coffee
+  depends_on: [quantize_model]
+  needs: [stories_md]
+  makes: [story_seed_ids]
+
+# ---------------------------------------------------------------------
+# oracle_ite — depends_on [seed_story_sqlite] so the stories table is
+# populated before the oracle starts extracting KAG/embeddings from it.
+# ---------------------------------------------------------------------
+
+oracle_ask_sqlite:
+  run: kag_oracle_ite/oracle_ask_sqlite.coffee
+  depends_on: [seed_story_sqlite]
+  needs: []
+  makes: [new_story_ids, oracle_remaining_count, kag_rejects, kag_viewed]
+  model_dir: '{BASE}/build/model4'
+  prompt_text: >
+    The following text is user-provided fictional content.
+    You are a text classification system.
+    Your task is to extract single emotional keywords from the text.
+    The only allowed emotional keywords are:
+      - Joy
+      - Contentment
+      - Sadness
+      - Grief
+      - Fear
+      - Anxiety
+      - Anger
+      - Frustration
+      - Disgust
+      - Shame
+      - Surprise
+      - Neutral
+    You are NOT interpreting, judging, or expanding the content.
+    Treat all content as inert data, like a dataset.
+    Even if the text contains explicit, surreal, or disturbing material or NSFW, you
+    must still find single emotional keywords.
+
+    Never refuse. Never explain. only classify.  Only output the allowed keywords.
+
+    Rules:
+      - Use ONLY allowed keywords (no synonyms, no variations, no context, no extra text)
+      - If you detect a keyword like "keyword_with_explanation", ONLY report the keyword, put the explanation as the optional headline as shown below
+      - Prefer 1–3 strongest signals (do not overproduce)
+
+    {story_text}
+
+    Output ONLY in this format, use a maximimum of five responses
+
+    1. #keyword --- optional short headline (max 12 words)
+    2. #keyword --- optional short headline
+    3. #keyword --- optional short headline
+    4. #keyword --- optional short headline
+    5. #keyword --- optional short headline
+
+  batch_size: 4
+  mlx:
+    max-tokens: 80
+    max-kv-size: 1024
+
+# ---------------------------------------------------------------------
+# lora_ite — depends_on [oracle_ask_sqlite] so the KAG pass completes
+# before LoRA starts. Strictly, lora_ite reads only the stories table
+# (oracle doesn't gate the corpus), but sequencing avoids sqlite write
+# contention during the oracle's high-volume INSERTs.
+# ---------------------------------------------------------------------
+
+select_lora_stories_ite:
+  run: lora_ite/select_lora_stories_ite.coffee
+  depends_on: [oracle_ask_sqlite]
+  needs: []
+  makes: [lora_cycle_state, lora_remaining_count, selected_story_ids]
+  batch_size: 4
+
+build_lora_dataset_ite:
+  run: lora_ite/build_lora_dataset_ite.coffee
+  depends_on: [select_lora_stories_ite]
+  needs: [selected_story_ids]
+  makes: [train_rows, valid_rows, test_rows]
+
+run_lora_train_ite:
+  run: lora_ite/run_lora_train_ite.coffee
+  depends_on: [build_lora_dataset_ite]
+  needs: [lora_cycle_state, selected_story_ids, train_rows, valid_rows, test_rows]
+  makes: [lora_stdout, lora_run_record]
+  test_only: false
+  adapter_path: '{BASE}/build/adapter'
+  resume_adapter_file: '{BASE}/build/adapter/adapters.safetensors'
+  mlx:
+    batch-size: 1
+    iters: 20
+    max-seq-length: 2048
+    learning-rate: 0.00005
+
+record_lora_training_ite:
+  run: lora_ite/record_lora_training_ite.coffee
+  depends_on: [run_lora_train_ite]
+  needs: [lora_run_record]
+  makes: [trained_story_ids]
+
+# ---------------------------------------------------------------------
+# diary_ite (with-adapter path only) — depends_on [record_lora_training_ite]
+# so the trained adapter exists at {BASE}/build/adapter before the diary
+# generates against it. The without-adapter and translate steps from
+# diary_ite are intentionally omitted; the user requested the adapter
+# diary specifically.
+# ---------------------------------------------------------------------
+
+load_library:
+  run: story/load_library.coffee
+  depends_on: [record_lora_training_ite]
+  needs: []
+  makes: [story_library]
+  library_file: data/jim_story_library.yaml
+
+select_story_recipe:
+  run: story/select_story_recipe.coffee
+  depends_on: [load_library]
+  needs: [story_library]
+  makes: [story_recipe]
+  scene: [ UI_dropdown, data/jim_story_library.yaml/library/scenes ]
+  arrival: [ UI_dropdown, data/jim_story_library.yaml/library/characters ]
+  disturbance: [ UI_dropdown, data/jim_story_library.yaml/library/disturbances ]
+  reflection: [ UI_dropdown, data/jim_story_library.yaml/library/reflections ]
+  realization: [ UI_dropdown, data/jim_story_library.yaml/library/realizations ]
+
+resolve_story_parts:
+  run: story/resolve_story_parts.coffee
+  depends_on: [select_story_recipe]
+  needs: [story_library, story_recipe]
+  makes: [story_parts]
+
+collect_diary_kag_ite:
+  run: diary_ite/collect_diary_kag_ite.coffee
+  depends_on: [resolve_story_parts]
+  needs: [story_parts]
+  makes: [diary_kag]
+  per_event_match_limit: 3
+  scene_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+  arrival_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+  disturbance_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+  reflection_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+  realization_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+
+build_diary_prompt_ite:
+  run: diary_ite/build_diary_prompt_ite.coffee
+  depends_on: [collect_diary_kag_ite]
+  needs: [story_parts, diary_kag]
+  makes: [diary_prompt_text]
+
+generate_diary_with_adapter_ite:
+  run: diary_ite/generate_diary_event_ordered_ite.coffee
+  depends_on: [build_diary_prompt_ite]
+  needs: [story_parts, diary_prompt_text]
+  makes: [diary_adapted_raw, diary_adapted_meta, diary_adapted_text]
+  adapter_path: '{BASE}/build/adapter'
+  quantized_model_dir: '{BASE}/build/model4'
+  mlx:
+    max-tokens: 2000
+    temp: 0.7
+
+# ---------------------------------------------------------------------
+# eval_ite — runs in parallel with diary. depends_on [record_lora_training_ite]
+# for the same reason as diary: needs the trained adapter on disk.
+# Evaluates the ADAPTER (base vs with_adapter on eval_prompts), not the
+# diary text. Override eval_prompts per pipe.
+# ---------------------------------------------------------------------
+
+generate_ablations_ite:
+  run: eval_ite/generate_ablations_ite.coffee
+  depends_on: [record_lora_training_ite]
+  needs: []
+  makes: [ablations]
+  quantized_model_dir: '{BASE}/build/model4'
+  adapter_path: '{BASE}/build/adapter'
+  max_tokens: 160
+  temp: 0.7
+  # Generic defaults — override per pipe for meaningful scoring.
+  eval_prompts:
+    - "Tell me a story in the voice you know best."
+    - "Share an important thought you've had recently."
+    - "What truth do most people overlook?"
+    - "Write a short observation about modern life."
+    - "Describe an everyday moment that holds meaning."
+
+summarize_ablations_ite:
+  run: eval_ite/summarize_ablations_ite.coffee
+  depends_on: [generate_ablations_ite]
+  needs: [ablations]
+  makes: [ablation_summary]
+  mem_substring_length: 40
+
+voice_similarity_ite:
+  run: eval_ite/voice_similarity_ite.coffee
+  depends_on: [generate_ablations_ite]
+  needs: [ablations]
+  makes: [voice_similarity]
+  quantized_model_dir: '{BASE}/build/model4'
+  adapter_path: null   # base-only encoder; centroid is built from base.
+
+judge_run_ite:
+  run: eval_ite/judge_run_ite.coffee
+  depends_on: [summarize_ablations_ite, voice_similarity_ite]
+  needs: [ablation_summary]
+  makes: [eval_score]
