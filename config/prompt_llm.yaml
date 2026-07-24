@@ -1,0 +1,37 @@
+# =====================================================================
+#   prompt_llm.yaml  —  iterative prompt-generation pipeline (LLM door)
+# =====================================================================
+#   Sibling of prompt_ite.yaml. Same contract, same artifacts, same UI
+#   surface — but the generate step drives the in-process C++/node-mlx
+#   door via L.callLLM({op:'generate', ...}) instead of spawning Python
+#   through L.callMLX('generate', ...).
+
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts:
+  prompt_generate_raw:
+    target: out/prompt_generate_raw.txt
+  prompt_generate_meta:
+    target: out/prompt_generate_meta.json
+  prompt_generate_text:
+    target: out/prompt_generate.txt
+
+generate_prompt_llm:
+  run: prompt_llm/generate_prompt_llm.coffee
+  depends_on: []
+  needs: []
+  makes: [prompt_generate_raw, prompt_generate_meta, prompt_generate_text]
+  quantized_model_dir: build/model4
+  output_file_prefix: prompt_generate
+  prompt_text: [ UI_textarea, "" ]
+  llm:
+    maxTokens: 1600
+    temperature: 0.7

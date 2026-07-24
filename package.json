@@ -12,6 +12,12 @@
     "clean": "rm -rf .venv build/* pipes/*/state pipes/*/env pipes/*/logs pipes/*/runtime.sqlite* pipes/*/experiment.yaml pipes/*/params pipes/*/tested pipes/*/out pipes/*/data pipes/*/pipeline.json pipes/*/override pipes/*/control_override.yaml pipes/*/.venv && touch build/.gitkeep"
   },
   "dependencies": {
-    "@jahbini/pipeline": "github:jahbini/pipeline"
+    "@jahbini/pipeline": "github:jahbini/pipeline",
+    "js-yaml": "^5.2.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@frost-beta/mlx"
+    ]
   }
 }

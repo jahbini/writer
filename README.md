@@ -28,6 +28,9 @@ is shared (each pipe symlinks to it).
 - **Node 20+**
 - **Python 3.10+** (for MLX)
 - **macOS with Apple Silicon** (MLX is ARM-only)
+- **git** and **git-lfs** (`brew install git-lfs && git lfs install`) — the
+  model download step (`@jahbini/pipeline`'s `model/download_model.coffee`)
+  clones the HF repo via git + LFS.
 - **~10 GB free disk** if you'll download a real model
 
 ## First run, in two commands

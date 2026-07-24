@@ -32,7 +32,7 @@ run:
   # — trainer pipe owns its training output). Stays CWD-relative.
   training_dir: build/train
   # Base model is shared at project level; substituteBraces fires at L.param.
-  loraLand: '{BASE}/build/model'
+  loraLand: 'build/model'
   debug_s: false
   debug_mlx: false
   debug_sql: false
@@ -118,19 +118,19 @@ reset_base_environment_ite:
   makes: []
 
 download_model:
-  run: story/hf_download.coffee
+  run: model/download_model.coffee
   depends_on: [reset_base_environment_ite]
   needs: []
   makes: []
-  loraLand: '{BASE}/build/model'
+  loraLand: 'build/model'
 
 quantize_model:
   run: kag_oracle/quantize_model.coffee
   depends_on: [download_model]
   needs: []
   makes: []
-  source_model_dir: '{BASE}/build/model'
-  quantized_model_dir: '{BASE}/build/model4'
+  source_model_dir: 'build/model'
+  quantized_model_dir: 'build/model4'
   quantized_model_memo_key: quantizedModelDir
   mlx:
     quantize: null
@@ -152,7 +152,7 @@ oracle_ask_sqlite:
   depends_on: [seed_story_sqlite]
   needs: []
   makes: [new_story_ids, oracle_remaining_count, kag_rejects, kag_viewed]
-  model_dir: '{BASE}/build/model4'
+  model_dir: 'build/model4'
   prompt_text: >
     The following text is user-provided fictional content.
     You are a text classification system.
@@ -218,7 +218,7 @@ build_lora_dataset_ite:
   makes: [train_rows, valid_rows, test_rows]
 
 run_lora_train_ite:
-  run: lora_ite/run_lora_train_ite.coffee
+  run: train_llm/run_lora_train_llm.coffee
   depends_on: [build_lora_dataset_ite]
   needs: [lora_cycle_state, selected_story_ids, train_rows, valid_rows, test_rows]
   makes: [lora_stdout, lora_run_record]
@@ -228,11 +228,11 @@ run_lora_train_ite:
   # receiver's shared BASE/build/adapter.
   adapter_path: build/adapter
   resume_adapter_file: build/adapter/adapters.safetensors
-  mlx:
-    batch-size: 1
+  llm:
+    batchSize: 1
     iters: 20
-    max-seq-length: 2048
-    learning-rate: 0.00005
+    maxSeqLength: 2048
+    learningRate: 0.00005
 
 record_lora_training_ite:
   run: lora_ite/record_lora_training_ite.coffee
@@ -298,7 +298,7 @@ generate_diary_with_adapter_ite:
   # Adapter is pipe-local on the server (just written by run_lora_train_ite
   # in this same pipe). Model4 is shared at BASE.
   adapter_path: build/adapter
-  quantized_model_dir: '{BASE}/build/model4'
+  quantized_model_dir: 'build/model4'
   mlx:
     max-tokens: 2000
     temp: 0.7
@@ -315,7 +315,7 @@ generate_ablations_ite:
   depends_on: [record_lora_training_ite]
   needs: []
   makes: [ablations]
-  quantized_model_dir: '{BASE}/build/model4'
+  quantized_model_dir: 'build/model4'
   # Same as the diary step above — adapter pipe-local, model4 shared.
   adapter_path: build/adapter
   max_tokens: 160
@@ -340,7 +340,7 @@ voice_similarity_ite:
   depends_on: [generate_ablations_ite]
   needs: [ablations]
   makes: [voice_similarity]
-  quantized_model_dir: '{BASE}/build/model4'
+  quantized_model_dir: 'build/model4'
   adapter_path: null   # base-only encoder; centroid is built from base.
 
 judge_run_ite:
