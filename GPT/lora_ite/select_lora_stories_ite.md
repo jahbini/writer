@@ -1,6 +1,5 @@
 Step: `select_lora_stories_ite`
-Recipe: `lora_ite`
-
+Recipe: `train_lora` (was `lora_ite`)
 Purpose:
 - pick the next batch of stories for LoRA training
 

@@ -1,0 +1,22 @@
+# =====================================================================
+#   reembed_clean.yaml  —  clean semantic re-embed of story chunks (for RAG)
+# =====================================================================
+#   One-time pass: re-embeds every story chunk's RAW text (no classification
+#   prompt) so RAG retrieval ranks by content instead of noise. Writes
+#   build/chunk_embeddings_clean.jsonl, which prompt_llm (rag_top_k > 0) then prefers over
+#   the contaminated kag_embeddings. Re-run only if the corpus changes.
+
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+
+# The step writes build/chunk_embeddings_clean.jsonl itself (real JSONL via fs),
+# so there's no .jsonl artifact target here.
+reembed_chunks_clean:
+  run: prompt_llm/reembed_chunks_clean.coffee
+  depends_on: []
+  needs: []
+  makes: []
+  quantized_model_dir: build/model4
+  clean_embeddings_file: build/chunk_embeddings_clean.jsonl

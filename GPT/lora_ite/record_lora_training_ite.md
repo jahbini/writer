@@ -1,6 +1,5 @@
 Step: `record_lora_training_ite`
-Recipe: `lora_ite`
-
+Recipe: `train_lora` (was `lora_ite`)
 Purpose:
 - persist LoRA run metadata into SQLite and materialize trained story ids
 

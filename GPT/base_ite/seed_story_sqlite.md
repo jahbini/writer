@@ -1,6 +1,5 @@
 Step: `seed_story_sqlite`
-Recipe: `base_ite`
-
+Recipe: `reset` (was `base_ite`)
 Purpose:
 - seed SQLite `stories` from `data/jim.md`
 

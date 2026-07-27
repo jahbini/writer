@@ -102,7 +102,10 @@ Current control model:
 - recipe UI fields are discovered from the active recipe YAML
 - supported directives are:
   - `UI_checkbox`
-  - `UI_dropdown`
+  - `UI_dropdown` — named sources via `loadDropdownOptions`, e.g. `adapters`
+    (lists each `build/adapter*` dir with an `adapter_config.json`, PLUS each
+    numbered checkpoint file `NNNNNNN_adapters.safetensors` inside as
+    `adapter @N`, plus a base option) and `db/kag_keywords`
   - `UI_textarea`
 - UI-backed values are stored in `state/ui-control.json`
 - effective run control is materialized to `control_override.yaml`
@@ -270,3 +273,17 @@ Known pitfalls:
   at once in the compact state. Do not lift these to the global
   `.controls textarea { min-height: 260px }` rule — that would defeat
   the "all three fields visible" intent of the per-textarea expand.
+
+## Presentation conventions (added 2026-07-27)
+- Step "Elapsed" renders `SSS.mmmS` via `formatDurationMs` — seconds zero-padded
+  to 3 integer digits + 3 decimals + `S` (e.g. `009.234S`, `000.500S`,
+  `065.000S`). Source: prefers server `duration_ms`, else `finished_at -
+  started_at` (see pipeline_runner `_finishFields` for why finished steps keep a
+  duration).
+- `.danger-button` (Delete Log/Output Files, Erase pipeline.json) uses a soft,
+  READABLE palette — pale-pink bg `#fdecef`, dark-red text `#9c2733`, rose
+  border `#d5a1a8` — not a saturated-red fill (which made the label unreadable).
+  Put any new destructive button on this class; do not reintroduce a solid-red
+  `background: var(--bad)` fill.
+- Both live in `writediary/ui/index.html` AND `pipeline/ui/index.html` (kept in
+  sync); the package copy mirrors to node_modules. Edit both when changing UI.

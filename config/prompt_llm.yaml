@@ -1,10 +1,16 @@
 # =====================================================================
-#   prompt_llm.yaml  —  iterative prompt-generation pipeline (LLM door)
+#   prompt_llm.yaml  —  prompt-generation pipeline (LLM door, optional RAG)
 # =====================================================================
-#   Sibling of prompt_ite.yaml. Same contract, same artifacts, same UI
-#   surface — but the generate step drives the in-process C++/node-mlx
-#   door via L.callLLM({op:'generate', ...}) instead of spawning Python
-#   through L.callMLX('generate', ...).
+#   Sibling of prompt_ite.yaml. Same contract, same artifacts — the
+#   generate step drives the in-process C++/node-mlx door via
+#   L.callLLM({op:'generate', ...}) (no Python spawn).
+#
+#   RAG is folded in (was the separate prompt_rag_llm recipe): set
+#   `rag_top_k` > 0 to first retrieve the top-K most similar Jim-story
+#   passages (cosine over build/chunk_embeddings_clean.jsonl) and prepend
+#   them as context — the LORE the style adapter can't hold. rag_top_k = 0
+#   (default) generates from the prompt as-is. The run log prints the
+#   retrieved passages + cosine scores when RAG is on.
 
 run:
   model: Qwen/Qwen3-4B-Instruct-2507
@@ -30,8 +36,22 @@ generate_prompt_llm:
   needs: []
   makes: [prompt_generate_raw, prompt_generate_meta, prompt_generate_text]
   quantized_model_dir: build/model4
+  # Adapter picker (UI dropdown). Lists build/adapter* dirs + a base option;
+  # defaults to build/adapter. Pick base / i100 / i200 / i300 in the UI without
+  # editing yaml. Empty value ('(base)') = no adapter.
+  adapter_path: [ UI_dropdown, adapters, build/adapter ]
   output_file_prefix: prompt_generate
+  # RAG toggle: 0 = generate from the prompt as-is; >0 (e.g. 4) = retrieve
+  # that many story passages and prepend them as context. Reads the clean
+  # re-embeddings written by the reembed_clean recipe.
+  rag_top_k: [ UI_textarea, "0" ]
+  clean_embeddings_file: build/chunk_embeddings_clean.jsonl
   prompt_text: [ UI_textarea, "" ]
   llm:
     maxTokens: 1600
     temperature: 0.7
+    # raw completion (NOT ChatML). The adapter was trained on raw story
+    # text, so its voice only shows in raw mode; ChatML makes the base
+    # assistant answer instead (why a question about Southwick came back as
+    # a generic "no such person" refusal).
+    raw: true

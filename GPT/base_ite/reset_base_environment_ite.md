@@ -1,6 +1,5 @@
 Step: `reset_base_environment_ite`
-Recipe: `base_ite`
-
+Recipe: `reset` (was `base_ite`)
 Purpose:
 - clear stale SQLite contents and stale training/oracle artifacts before a fresh base seed
 

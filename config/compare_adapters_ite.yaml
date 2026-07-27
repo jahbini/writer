@@ -1,0 +1,37 @@
+# =====================================================================
+#   compare_adapters_ite.yaml — adapter ranking harness (writediary)
+# =====================================================================
+#   Ranks a LIST of LoRA adapters (incl. the base model) on the FROZEN
+#   held-out prompt set at eval/heldout_prompts.json, with pinned,
+#   deterministic (temperature 0) sampling. One step, no training —
+#   feed it the adapters you want ranked and read eval_out/adapter_
+#   comparison.json. This is the harness that makes Changes 1-3
+#   verifiable (rank, don't eyeball).
+#
+#   Select from a pipe:
+#     pipes/<pipe>/override/compare_adapters_ite.yaml -> pipeline: compare_adapters_ite
+#   Model + adapter paths are relative to the pipe CWD (pipes/<pipe>/);
+#   the eval spec is shared at {BASE}/eval/heldout_prompts.json.
+run:
+  output_dir: out
+  data_dir: data
+
+artifacts:
+  adapter_comparison:
+    target: eval_out/adapter_comparison.json
+
+compare_adapters_ite:
+  run: eval_ite/compare_adapters_ite.coffee
+  depends_on: []
+  needs: []
+  makes: [adapter_comparison]
+  quantized_model_dir: build/model4
+  eval_spec_path: '{BASE}/eval/heldout_prompts.json'
+  # The adapters to rank. `adapter_path: null` = base model (no adapter).
+  # Paths are relative to the pipe CWD. Set this per comparison — for the
+  # Change 1 A/B this becomes [base, adapter_noeos, adapter_eos].
+  compare_adapters:
+    - label: base
+      adapter_path: null
+    - label: current_adapter
+      adapter_path: build/adapter

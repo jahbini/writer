@@ -1,6 +1,14 @@
+> **OBSOLETE (2026-07-26).** This step is dead. It existed only to write the
+> mlx-lm `-c/--config` YAML for the Python `mlx_lm.lora` path; that path is gone
+> (training now goes through the in-process node-mlx `trainLoRA` door). Its only
+> referrer — the root `override/lora_ite.yaml` — was deleted in the recipe
+> consolidation. The script `scripts/lora_ite/build_lora_config_ite.coffee` and
+> `params/build_lora_config_ite.yaml` are scheduled for removal with the
+> dead-scripts batch (see `RECIPE_CLEANUP_2026-07-26.md`). Kept for history only.
+
 Step: `build_lora_config_ite`
-Recipe: `lora_ite` (added via override; not in the package recipe)
-Script: `scripts/lora_ite/build_lora_config_ite.coffee` (project-shared, BASE tier)
+Recipe: (none — was `lora_ite` via a since-deleted override)
+Script: `scripts/lora_ite/build_lora_config_ite.coffee` (DEAD; scheduled for removal)
 
 Purpose:
 - write the YAML file consumed by `mlx_lm.lora`'s `-c/--config` flag so

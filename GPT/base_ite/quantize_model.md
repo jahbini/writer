@@ -1,6 +1,5 @@
 Step: `quantize_model`
-Recipe: `base_ite`
-
+Recipe: `reset` (was `base_ite`)
 Purpose:
 - build the prepared quantized inference model in `build/model4` from the full base model in `build/model`
 

@@ -10,8 +10,26 @@ Inputs:
 - artifact `story_parts`
 - artifact `diary_kag`
 - params `quantized_model_dir`
-- optional `adapter_path`
+- optional `adapter_path` (UI dropdown `adapters` in the recipe; empty = base)
 - optional `mlx`
+- `include_chunk_passages` (default `true`), `chunk_excerpt_chars` (default `700`, `0` = full)
+
+Chunk tactic (2026-07-27) — the "does it help" experiment:
+- `buildEventPrompt` now folds each event's matched CHUNKS (Jim's own passages,
+  the `chunk_text` on `chosenEntries`) into that event's prompt as a `reference:`
+  block, plus a "borrow cadence/texture, never whole sentences or plots" rule.
+  Before this, only `keyword: headline` cues were passed (`renderKagLines`); the
+  passages were collected but dropped.
+- Keyed off the diary steps: one reference group per event, from that event's
+  matches (deduped, each clipped to `chunk_excerpt_chars` via `clipText`).
+- A/B: `include_chunk_passages` is a **UI checkbox** (`[ UI_checkbox, true ]` on
+  both generate steps in `diary_ite.yaml`) — check = chunks on, uncheck =
+  cues-only (the old behaviour). No yaml/override edit needed. The step logs
+  `chunk passages: on/off` so you can confirm which ran. This is the ONLY place
+  the tactic reaches the event-ordered output — `build_diary_prompt_ite`/
+  `diary_prompt_text` is not consumed here.
+- If passages make the voice bloviate/ramble, LOWER `chunk_excerpt_chars` or
+  `per_event_match_limit` (collect_diary_kag_ite) before turning them off.
 
 Outputs:
 - when called as `generate_diary_with_adapter_ite`:

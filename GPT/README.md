@@ -31,14 +31,16 @@ Rules:
   `max_tokens=2000`, and MLX/OMP/VECLIB/RAYON thread-count runs at 8 and 12;
   normal tests should exercise the active current path.
 - repository-level runtime verification is coordinated through root
-  `test.sh`. The script is committed and stable — it rebuilds the native
-  addon (`npx node-gyp rebuild`) and runs the 64-token gypsy generation
-  probe at `test/helpers/native_64_mlx_lazy_generation_probe.coffee`. Treat
-  it as the canonical "did the build work" command. Task-specific or
-  exploratory test helpers go under `test/` (which is gitignored). When a
-  test step is added to `test.sh`, record every step's `.log` and `.err`
-  output under `test/logs/<run_id>/` so the result is auditable. If Python
-  is ever needed, the script must activate `.venv` first with
+  `test.sh`. The script is local-only and gitignored — never committed —
+  but treated as stable: it rebuilds the native addon (`npx node-gyp
+  rebuild`) and runs the 64-token gypsy generation probe at
+  `test/helpers/native_64_mlx_lazy_generation_probe.coffee`. Treat it as
+  the canonical "did the build work" command. Both `test.sh` and the
+  whole `test/` tree (task-specific and exploratory helpers) are
+  gitignored — the verification harness lives only in the working tree.
+  When a test step is added to `test.sh`, record every step's `.log` and
+  `.err` output under `test/logs/<run_id>/` so the result is auditable. If
+  Python is ever needed, the script must activate `.venv` first with
   `source .venv/bin/activate`.
 
 Current repository assumptions worth preserving:
@@ -93,10 +95,16 @@ Current repository assumptions worth preserving:
   `npm run model` (which writes a temporary project-root `override.yaml`
   selecting the `download_model` recipe). Recipes that run inside pipes
   must not read them.
-- the `_ite` recipes are the production covering set of capabilities. Recipes
-  without the `_ite` suffix (e.g. `full`, `story`, `train_lora`,
-  `train_markdown`, `dialog_reword`, `kag_oracle`, `story_kag_chat`, `test`)
-  are earlier-capability references and are not the production targets.
+- NAMING / SUFFIXES ARE TRANSITIONAL. `_ite` and `_llm` are door-markers, not
+  a permanent taxonomy: `_ite` = the grandfathered path (Python/mlx-lm spawn via
+  `L.callMLX`), `_llm` = the in-process node-mlx door (`L.callLLM`). The target
+  end-state is every script DUAL-AWARE — speaks both doors — at which point the
+  suffix carries no information and drops away. So suffix-less names (`reset`,
+  `train_lora`, `reembed_clean`, `download_model`, `test`) are the DIRECTION, not
+  legacy. Do NOT churn names just to add a suffix. Judge a recipe/script by
+  whether it is OBSOLETE (old-path-only AND superseded by a live equivalent) vs
+  LIVE — never by whether it ends in `_ite`/`_llm`.
+- `test` is kept deliberately as a worked example for future pipeline users.
 - each recipe is a 1:1 conversion of one Python notebook. Each step/script
   in a recipe is the direct equivalent of one notebook step. The DAG runner
   adds dependency edges (`needs` / `makes`), reactivity (the memo), and
@@ -167,11 +175,10 @@ WORKING DISCIPLINE (human directive, May 2026):
   human explicitly asks for one is allowed; editing an existing recipe's
   values is not. If a recipe value looks wrong, express the correction
   as an override entry and tell the human — do not reach into the
-  recipe. (This was added after the assistant repeatedly edited
-  `config/lora_story_ite.yaml`'s `iters` value mid-session instead of
-  using an override.)
+  recipe. (This was added after the assistant repeatedly edited a training
+  recipe's `iters` value mid-session instead of using an override.)
 - new empty pipes infer their model identity from the pipe directory name
-- `base_ite` now owns base preparation through quantization, so downstream inference recipes consume prepared artifacts instead of rebuilding them
+- `reset` (formerly `base_ite`) now owns base preparation through quantization, so downstream inference recipes consume prepared artifacts instead of rebuilding them
 - the UI drives recipe fields through recipe-declared directives, currently `UI_dropdown`, `UI_checkbox`, and `UI_textarea`
 - the UI layout is intentionally split into:
   - left column for death/output/step/log visibility
