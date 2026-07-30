@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://writers-guild.local/schemas/story_spine.schema.json",
+  "title": "Story Spine",
+  "description": "Deterministic structural plan produced by the Story Spine Generator. Contains no prose. Downstream scene planners and prose generators consume it to expand into a chapter. Immutable story facts, required scene obligations, and generation freedoms are kept strictly separated.",
+  "type": "object",
+  "required": ["story", "questions", "causal_spine", "scenes"],
+  "additionalProperties": false,
+  "properties": {
+    "story": {
+      "type": "object",
+      "required": [
+        "title",
+        "premise",
+        "protagonist",
+        "dramatic_axis",
+        "starting_state",
+        "terminal_state",
+        "required_story_events",
+        "protected_facts",
+        "generation_freedoms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "premise": { "type": "string", "minLength": 1 },
+        "protagonist": { "type": "string", "minLength": 1 },
+        "dramatic_axis": {
+          "type": "object",
+          "required": [
+            "external_problem",
+            "internal_obstacle",
+            "missed_opportunity",
+            "primary_consequence"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "external_problem":    { "type": "string", "minLength": 1 },
+            "internal_obstacle":   { "type": "string", "minLength": 1 },
+            "missed_opportunity":  { "type": "string", "minLength": 1 },
+            "primary_consequence": { "type": "string", "minLength": 1 }
+          }
+        },
+        "starting_state": { "type": "string", "minLength": 1 },
+        "terminal_state": { "type": "string", "minLength": 1 },
+        "required_story_events": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Events that MUST occur. Later generators may not remove or alter them."
+        },
+        "protected_facts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Facts later stages may never contradict."
+        },
+        "generation_freedoms": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Aspects later generators are free to invent."
+        }
+      }
+    },
+
+    "questions": {
+      "type": "object",
+      "required": ["central", "supporting"],
+      "additionalProperties": false,
+      "properties": {
+        "central": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "text"],
+            "additionalProperties": false,
+            "properties": {
+              "id":   { "type": "string", "pattern": "^q[a-z0-9_]+$" },
+              "text": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "supporting": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "text"],
+            "additionalProperties": false,
+            "properties": {
+              "id":   { "type": "string", "pattern": "^q[a-z0-9_]+$" },
+              "text": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+
+    "causal_spine": {
+      "type": "array",
+      "minItems": 2,
+      "description": "The logical chain of cause and effect. Not prose. Not a scene list.",
+      "items": {
+        "type": "object",
+        "required": ["id", "event", "depends_on", "causes", "opens_questions", "closes_questions"],
+        "additionalProperties": false,
+        "properties": {
+          "id":         { "type": "string", "pattern": "^c[0-9]+$" },
+          "event":      { "type": "string", "minLength": 1 },
+          "depends_on": { "type": "array", "items": { "type": "string", "pattern": "^c[0-9]+$" } },
+          "causes":     { "type": "array", "items": { "type": "string", "pattern": "^c[0-9]+$" } },
+          "opens_questions":  { "type": "array", "items": { "type": "string", "pattern": "^q[a-z0-9_]+$" } },
+          "closes_questions": { "type": "array", "items": { "type": "string", "pattern": "^q[a-z0-9_]+$" } }
+        }
+      }
+    },
+
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Minimum number of dramatic scenes; each is one meaningful state transition.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "purpose",
+          "starting_state",
+          "catalyst",
+          "required_events",
+          "dramatic_pressure",
+          "required_choice",
+          "required_reveal",
+          "required_outcomes",
+          "ending_state",
+          "carry_forward",
+          "generation_freedoms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^s[0-9]+$" },
+          "purpose": {
+            "type": "string",
+            "description": "Why this scene exists.",
+            "enum": [
+              "establish_need",
+              "introduce_opportunity",
+              "force_a_decision",
+              "raise_stakes",
+              "reveal_information",
+              "lose_an_opportunity",
+              "resolve_a_question"
+            ]
+          },
+          "starting_state": { "type": "string", "minLength": 1 },
+          "catalyst":       { "type": "string", "minLength": 1 },
+          "required_events": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Events that MUST appear in the scene. Prose generator decides HOW."
+          },
+          "dramatic_pressure": { "type": "string", "minLength": 1 },
+          "required_choice":   { "type": ["string", "null"] },
+          "required_reveal":   { "type": ["string", "null"] },
+          "required_outcomes": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "What must be true when the scene ends."
+          },
+          "ending_state": { "type": "string", "minLength": 1 },
+          "carry_forward": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "unanswered_questions":    { "type": "array", "items": { "type": "string", "pattern": "^q[a-z0-9_]+$" } },
+              "unresolved_relationships":{ "type": "array", "items": { "type": "string" } },
+              "commitments":             { "type": "array", "items": { "type": "string" } },
+              "risks":                   { "type": "array", "items": { "type": "string" } },
+              "obligations":             { "type": "array", "items": { "type": "string" } },
+              "new_knowledge":           { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "generation_freedoms": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "What later generators may invent (dialogue, setting, metaphors, minor actions)."
+          }
+        }
+      }
+    }
+  }
+}

@@ -74,19 +74,18 @@ resolve_story_parts:
   needs: [story_library, story_recipe]
   makes: [story_parts]
 
-# ─── Story Spine (NEW, Phase 1 sidecar) ────────────────────────────
+# ─── Story Spine (Phase 2 — upstream of the prompt builder) ────────
 # Local sacred step at pipes/story/scripts/story_spine.coffee. Runner
 # resolves `run:` under CWD/scripts/ first, so the local script wins
 # over any similarly-named runner-bundled script.
 #
-# depends_on includes generate_diary_without_adapter_ite so this step
-# never overlaps with the diary generator on the shared getSession
-# cache — see the kvCache reset in mlx/session_api.coffee generate().
-# Two parallel generators against the same session race on the LLM's
-# kvCache and blow up with "Error converting 'this' to mx.array".
+# story_spine now feeds build_diary_prompt_ite (Phase 2 wiring below),
+# so it runs BEFORE the prompt builder — which naturally serializes it
+# against generate_diary_without_adapter_ite (they can never overlap
+# on the shared getSession cache).
 story_spine:
   run: story_spine.coffee
-  depends_on: [resolve_story_parts, generate_diary_without_adapter_ite]
+  depends_on: [resolve_story_parts]
   needs: [story_parts]
   makes: [story_spine_json]
 
@@ -131,9 +130,12 @@ collect_diary_kag_ite:
   realization_emotion: [ UI_dropdown, db/kag_keywords, "" ]
 
 build_diary_prompt_ite:
-  run: diary_ite/build_diary_prompt_ite.coffee
-  depends_on: [collect_diary_kag_ite]
-  needs: [story_parts, diary_kag]
+  # LOCAL FORK at pipes/story/scripts/build_diary_prompt_ite.coffee.
+  # CWD/scripts/ wins over EXEC/scripts/, so this override picks up the
+  # forked step that folds story_spine_json into the prompt.
+  run: build_diary_prompt_ite.coffee
+  depends_on: [collect_diary_kag_ite, story_spine]
+  needs: [story_parts, diary_kag, story_spine_json]
   makes: [diary_prompt_text]
   # Chunk tactic lives HERE now: build_diary_prompt_ite folds each event's
   # matched story passages (Jim's own words) into diary_prompt_text, which both

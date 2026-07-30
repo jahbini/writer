@@ -1,0 +1,41 @@
+pipeline: diary_ite
+artifacts:
+  story_spine_json:
+    target: out/story_spine.json
+story_spine:
+  run: story_spine.coffee
+  depends_on:
+    - resolve_story_parts
+  needs:
+    - story_parts
+  makes:
+    - story_spine_json
+  protagonist:
+    - UI_dropdown
+    - data/jim_story_library.yaml/story_atoms/characters
+  antagonist:
+    - UI_dropdown
+    - data/jim_story_library.yaml/story_atoms/characters
+  witness:
+    - UI_dropdown
+    - data/jim_story_library.yaml/story_atoms/characters
+  external_problem:
+    - UI_dropdown
+    - data/jim_story_library.yaml/story_atoms/external_problems
+  internal_obstacle:
+    - UI_dropdown
+    - data/jim_story_library.yaml/story_atoms/internal_obstacles
+  missed_opportunity:
+    - UI_dropdown
+    - data/jim_story_library.yaml/story_atoms/missed_opportunities
+  primary_consequence:
+    - UI_dropdown
+    - data/jim_story_library.yaml/story_atoms/primary_consequences
+  lens:
+    - UI_dropdown
+    - data/jim_story_library.yaml/story_atoms/lenses
+  mlx:
+    model: build/model4
+    max-tokens: 2000
+    temp: 0
+    top-p: 1

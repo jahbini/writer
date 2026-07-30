@@ -7,14 +7,6 @@
 
 ruins
 
-rusty/**/target/
-rusty/**/build/
-rusty/**/out/
-rusty/**/debug/
-rusty/**/release/
-rusty/**/tmp/
-rusty/**/logs/
-rusty/**/mlx_smoke
 metal/*.node
 metal/build/
 
@@ -45,7 +37,6 @@ runtime.sqlite.backup-*
 # Durable, project-owned content lives at the repo root: config/ (recipes not
 # in node_modules) and scripts/ (scripts not in node_modules), both tracked.
 # Pipe-local scripts/overrides/data/state are override/debug + run artifacts.
-pipes/
 
 # Local data & outputs
 build/
@@ -63,6 +54,11 @@ state/
 pipeline.json
 experiment.yaml
 override.yaml
+*-wal
+*-shm
+pipes/sample
+pipes/story/build
+pipes/story/diary
 
 # macOS
 .DS_Store
