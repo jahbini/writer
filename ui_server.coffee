@@ -341,10 +341,24 @@ loadDropdownOptions = (specPath) ->
     node = node[key]
   return [] unless node? and typeof node is 'object'
   rows = []
-  for own key, value of node
-    label = value?.text ? value?.character ? value?.label ? key
-    rows.push { key, label }
-  rows.sort (a, b) -> String(a.label).localeCompare String(b.label)
+  preserveOrder = false
+  if Array.isArray(node)
+    # Ordered list. Entries may be bare strings (key == label) or objects
+    # with {id|key, label, ...} — the latter preserves author-curated order.
+    for v in node
+      if typeof v is 'string'
+        rows.push { key: v, label: v }
+      else if v? and typeof v is 'object'
+        key = v.id ? v.key
+        continue unless key?
+        label = v.label ? v.text ? v.character ? v.desc ? key
+        rows.push { key: String(key), label: String(label) }
+        preserveOrder = true
+  else
+    for own key, value of node
+      label = value?.text ? value?.character ? value?.label ? key
+      rows.push { key, label }
+  rows.sort (a, b) -> String(a.label).localeCompare String(b.label) unless preserveOrder
   rows
 
 scanUiFields = (recipe, override, uiControl) ->

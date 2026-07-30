@@ -4,7 +4,7 @@
 #
 # Run this once after `git clone`. It does, in order:
 #
-#   1. npm install         — pulls @jahbini/pipeline from GitHub
+#   1. pnpm install         — pulls @jahbini/pipeline from GitHub
 #   2. shared .venv        — creates ./.venv at the project root and
 #                             pip-installs MLX (mlx, mlx-lm, mlx-metal
 #                             at pinned versions)
@@ -14,16 +14,16 @@
 #
 # After this, four things are available:
 #
-#   npm run download -- Qwen/Qwen3-4B-Instruct-2507
+#   pnpm run download -- Qwen/Qwen3-4B-Instruct-2507
 #                         # downloads + quantizes a model into build/
 #
 #   cd pipes/sample && npx pipeline
 #                         # runs the sample pipe (the test pipeline)
 #
-#   npm run pipe:new <name> [pipeline-name]
+#   pnpm run pipe:new <name> [pipeline-name]
 #                         # adds a new pipe; default pipeline is `test`
 #
-#   npm run ui            # open the multi-pipe UI at http://127.0.0.1:4311
+#   pnpm run ui            # open the multi-pipe UI at http://127.0.0.1:4311
 #
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -35,8 +35,8 @@ banner() {
   echo "════════════════════════════════════════════════════════════════════"
 }
 
-banner "1/3  npm install — pulling @jahbini/pipeline from GitHub"
-npm install
+banner "1/3  pnpm install — pulling @jahbini/pipeline from GitHub"
+pnpm install
 
 banner "2/3  Setting up the venv with MLX at the project base (./.venv)"
 # The venv lives at the project BASE — stable, outside the npm tree.
@@ -65,7 +65,7 @@ cd ../..
 echo
 echo "Done. Four things to try next:"
 echo
-echo "  npm run model -- Qwen/Qwen3-4B-Instruct-2507"
+echo "  pnpm run model -- Qwen/Qwen3-4B-Instruct-2507"
 echo "      # activates the download_model recipe to fetch + quantize"
 echo "      # a HuggingFace model into build/model and build/model4."
 echo "      # The recipe runs through the pipeline, not via raw HF cli"
@@ -74,8 +74,8 @@ echo
 echo "  cd pipes/sample && npx pipeline"
 echo "      # run the sample pipe end-to-end (test pipeline, no model needed)"
 echo
-echo "  npm run pipe:new my_experiment"
+echo "  pnpm run pipe:new my_experiment"
 echo "      # scaffold a new pipe under pipes/my_experiment/"
 echo
-echo "  npm run ui"
+echo "  pnpm run ui"
 echo "      # open the multi-pipe UI on http://127.0.0.1:4311"

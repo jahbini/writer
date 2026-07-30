@@ -1,0 +1,166 @@
+# =====================================================================
+#   story.yaml  —  diary_ite evolved to output a chapter (Phase 1)
+# =====================================================================
+#   Copy of the shipped diary_ite recipe with one new step inserted:
+#   `story_spine` — a structural planner that reads story_parts + a
+#   handful of atom selections and emits story_spine_json, a strict
+#   JSON plan a future prose stage can expand into a chapter.
+#
+#   Phase 1: story_spine is a sidecar (nothing downstream consumes it
+#   yet). The diary generation branch continues to run unchanged.
+#   Phase 2 will wire story_spine_json into build_diary_prompt_ite.
+#
+#   Lives at <BASE>/config/story.yaml — shadows any runner-bundled
+#   config/story.yaml at <EXEC>/config/. Activated by
+#   pipes/story/override.yaml (`pipeline: story`).
+
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts:
+  story_library:
+    target: out/story_library.json
+  story_recipe:
+    target: out/story_recipe.json
+  story_parts:
+    target: out/story_parts.json
+  diary_kag:
+    target: out/diary_kag.json
+  diary_prompt_text:
+    target: out/diary_prompt.txt
+  diary_adapted_raw:
+    target: out/diary_adapted_raw.txt
+  diary_base_raw:
+    target: out/diary_base_raw.txt
+  diary_adapted_meta:
+    target: out/diary_adapted_meta.json
+  diary_base_meta:
+    target: out/diary_base_meta.json
+  diary_adapted_text:
+    target: out/diary_adapted.txt
+  diary_base_text:
+    target: out/diary_base.txt
+  story_spine_json:
+    target: out/story_spine.json
+
+load_library:
+  run: story/load_library.coffee
+  depends_on: []
+  needs: []
+  makes: [story_library]
+  library_file: data/jim_story_library.yaml
+
+select_story_recipe:
+  run: story/select_story_recipe.coffee
+  depends_on: [load_library]
+  needs: [story_library]
+  makes: [story_recipe]
+  scene: [ UI_dropdown, data/jim_story_library.yaml/library/scenes ]
+  arrival: [ UI_dropdown, data/jim_story_library.yaml/library/characters ]
+  disturbance: [ UI_dropdown, data/jim_story_library.yaml/library/disturbances ]
+  reflection: [ UI_dropdown, data/jim_story_library.yaml/library/reflections ]
+  realization: [ UI_dropdown, data/jim_story_library.yaml/library/realizations ]
+
+resolve_story_parts:
+  run: story/resolve_story_parts.coffee
+  depends_on: [select_story_recipe]
+  needs: [story_library, story_recipe]
+  makes: [story_parts]
+
+# ─── Story Spine (NEW, Phase 1 sidecar) ────────────────────────────
+# Local sacred step at pipes/story/scripts/story_spine.coffee. Runner
+# resolves `run:` under CWD/scripts/ first, so the local script wins
+# over any similarly-named runner-bundled script.
+#
+# depends_on includes generate_diary_without_adapter_ite so this step
+# never overlaps with the diary generator on the shared getSession
+# cache — see the kvCache reset in mlx/session_api.coffee generate().
+# Two parallel generators against the same session race on the LLM's
+# kvCache and blow up with "Error converting 'this' to mx.array".
+story_spine:
+  run: story_spine.coffee
+  depends_on: [resolve_story_parts, generate_diary_without_adapter_ite]
+  needs: [story_parts]
+  makes: [story_spine_json]
+
+  # Character slots (protagonist required; others may be left blank).
+  protagonist: [ UI_dropdown, data/jim_story_library.yaml/story_atoms/characters ]
+  antagonist:  [ UI_dropdown, data/jim_story_library.yaml/story_atoms/characters ]
+  witness:     [ UI_dropdown, data/jim_story_library.yaml/story_atoms/characters ]
+
+  # Dramatic axis (all required).
+  external_problem:    [ UI_dropdown, data/jim_story_library.yaml/story_atoms/external_problems ]
+  internal_obstacle:   [ UI_dropdown, data/jim_story_library.yaml/story_atoms/internal_obstacles ]
+  missed_opportunity:  [ UI_dropdown, data/jim_story_library.yaml/story_atoms/missed_opportunities ]
+  primary_consequence: [ UI_dropdown, data/jim_story_library.yaml/story_atoms/primary_consequences ]
+
+  # Interpretive lens through which the finished chapter reads.
+  lens: [ UI_dropdown, data/jim_story_library.yaml/story_atoms/lenses ]
+
+  # Fast in-process node-mlx generation (S.callLLM), NOT the Python
+  # subprocess path (S.callMLX). Same knobs generate_diary_*_ite use.
+  quantized_model_dir: build/model4
+  llm:
+    # 2000 truncated the response mid-scene (Generation: 2000/2000 tokens
+    # in the failing run). 4000 is comfortable headroom for the full
+    # 4-section structured plan; raise if the model still runs out.
+    maxTokens: 4000
+    # temperature: 0 triggers a div-by-zero deep in @frost-beta/llm's
+    # sampler ("Error converting 'this' to mx.array"). 0.05 is
+    # near-deterministic without hitting the numerical edge case.
+    temperature: 0.05
+    topP: 0.95
+
+collect_diary_kag_ite:
+  run: diary_ite/collect_diary_kag_ite.coffee
+  depends_on: [resolve_story_parts]
+  needs: [story_parts]
+  makes: [diary_kag]
+  per_event_match_limit: 3
+  scene_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+  arrival_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+  disturbance_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+  reflection_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+  realization_emotion: [ UI_dropdown, db/kag_keywords, "" ]
+
+build_diary_prompt_ite:
+  run: diary_ite/build_diary_prompt_ite.coffee
+  depends_on: [collect_diary_kag_ite]
+  needs: [story_parts, diary_kag]
+  makes: [diary_prompt_text]
+  # Chunk tactic lives HERE now: build_diary_prompt_ite folds each event's
+  # matched story passages (Jim's own words) into diary_prompt_text, which both
+  # generators consume. include_chunk_passages = UI toggle (checked = chunks on,
+  # unchecked = cues only); chunk_excerpt_chars caps each passage (0 = full).
+  include_chunk_passages: [ UI_checkbox, true ]
+  chunk_excerpt_chars: 700
+
+generate_diary_with_adapter_ite:
+  run: diary_ite/generate_diary_with_adapter_ite.coffee
+  depends_on: [never]
+  needs: [story_parts, diary_prompt_text]
+  makes: [diary_adapted_raw, diary_adapted_meta, diary_adapted_text]
+  # Adapter picker (UI dropdown). Lists build/adapter* dirs + checkpoints + a
+  # base option; defaults to build/adapter. Empty value ('(base)') = no adapter.
+  adapter_path: [ UI_dropdown, adapters, build/adapter ]
+  quantized_model_dir: build/model4
+  llm:
+    maxTokens: 2000
+    temperature: 0.7
+
+generate_diary_without_adapter_ite:
+  run: diary_ite/generate_diary_without_adapter_ite.coffee
+  depends_on: [build_diary_prompt_ite]
+  needs: [story_parts, diary_prompt_text]
+  makes: [diary_base_raw, diary_base_meta, diary_base_text]
+  quantized_model_dir: build/model4
+  llm:
+    maxTokens: 2000
+    temperature: 0.7

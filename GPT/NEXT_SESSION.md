@@ -1,6 +1,44 @@
-# NEXT SESSION — read this first (handoff 2026-07-26)
+# NEXT SESSION — read this first (handoff 2026-07-31)
 
-## Today (2026-07-26): recipe & script consolidation — see `RECIPE_CLEANUP_2026-07-26.md`
+## Today (2026-07-31): Story Spine, Phase 1 — see `story/story_spine.md`
+
+Built the `story` recipe — a fork of `diary_ite` with a new
+`story_spine` step that reads eight atom dropdowns
+(protagonist/antagonist/witness + 4-axis dramatic atoms + interpretive
+lens) and emits `out/story_spine.json`: a strict JSON structural plan
+(story/questions/causal_spine/scenes) that a future prose stage will
+expand into one chapter. Recipe at `<BASE>/config/story.yaml`, atoms
+library at `pipes/story/data/jim_story_library.yaml` under
+`story_atoms:`, schema at `pipes/story/schemas/story_spine.schema.json`,
+step implementation at `pipes/story/scripts/story_spine.coffee`. Sacred
+style (`action: (S) ->`), uses `S.callLLM` (in-process node-mlx), NOT
+`S.callMLX` (Python subprocess).
+
+Confirmed working: "The Road That Flickers" — 4 scenes, 8 causal steps,
+3 central questions, tarot lens applied to premise.
+
+**Two landmines documented in `story/story_spine.md`, worth the second
+read:**
+- `mlx/session_api.coffee` `generate()` got an in-process patch that
+  disposes `llm.kvCache` before each call (`@frost-beta/llm` reuses it
+  otherwise → position-index confusion → mx.array crash). The patch
+  lives in `node_modules/` and **evaporates on `pnpm install`** — needs
+  upstream and re-application until it lands.
+- Two steps that call `S.callLLM` on the same `modelDir` share the
+  cached LLM object via `getSession`, so they must have an explicit
+  `depends_on` edge. Currently `story_spine.depends_on:
+  [resolve_story_parts, generate_diary_without_adapter_ite]` — the
+  latter forces serialization.
+
+**Resume here — Phase 2:** wire `story_spine_json` into
+`build_diary_prompt_ite` so the diary generator actually produces a
+chapter shaped by the structural plan (not just the current diary
+entry). Right now the spine is a sidecar; nothing consumes it. Also
+worth: convert the JSON-shape check into full JSON Schema validation
+against `pipes/story/schemas/story_spine.schema.json` (would need
+`ajv` as a dep) — but skip it while the model output is consistent.
+
+## Previous handoff (2026-07-26): recipe & script consolidation — see `RECIPE_CLEANUP_2026-07-26.md`
 Shrank the recipe corpus one recipe at a time. Renamed `base_ite → reset`;
 merged `lora_ite`+`diary_full4test` → **`train_lora`** (tuned full-corpus params
 as recipe defaults); folded `prompt_rag_llm` into **`prompt_llm`** behind a
