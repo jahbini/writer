@@ -1,6 +1,153 @@
-# NEXT SESSION — read this first (handoff 2026-07-31)
+# NEXT SESSION — read this first (handoff 2026-08-01)
 
-## Today (2026-07-31): Story Spine, Phase 1 — see `story/story_spine.md`
+> **Canonical repo is now `~/writer`. `~/writers-guild` is being retired.**
+> All future edits, notes, and memories belong here. If a memory or
+> doc still references `writers-guild`, treat it as archival and
+> update it when you touch it.
+
+## Today (2026-08-01): Story Spine → four-layer split — see `story/story_spine.md`, `story/README.md`
+
+The chapter pipeline is being restructured into four independent
+planning layers:
+
+```
+Premise  →  Story Spine  →  Story Beats  →  Scene Planner  →  Prose
+```
+
+Golden rule: each layer decides only what its layer owns. The Story
+Spine describes **dramatic necessity** ("an opportunity to receive
+help appears") — it never stages ("Southwick appears at the
+roadside"). Story Beats sharpen necessity into ordered abstract
+movements with a first-class `conflict: {need, protection}`. Scene
+Planner is the only layer that assigns concrete cast to dramatic
+roles (Tommy's old girlfriend embodies the opportunity, etc.).
+
+**Narrative voice at every layer: first-person Jim, always.** Even
+when the dramatic protagonist is Tommy or someone else, Jim narrates
+as observer/witness/recounter. Do NOT bind voice to
+`spine.cast.protagonist.label`. The LoRA/base was trained on Jim's
+voice; close-third loses it.
+
+### Increment status
+- (a) ✅ 2026-08-01 — Story Spine slimmed to dramatic necessity only.
+  Removed `causal_spine`, `scenes`, `required_story_events`. Split
+  `questions` into `story` / `reader_curiosities` / `symbolic`.
+  Prompt now includes explicit WRONG/RIGHT examples of the
+  abstraction level. `build_diary_prompt_ite` fork updated: voice
+  pinned to first-person Jim; renders axis + protected_facts +
+  three question kinds instead of walking scenes.
+- (b) ✅ 2026-08-01 — Story Beats step landed at
+  `pipes/story/scripts/story_beats.coffee`. Emits `story_beats_json`
+  with 3–5 ordered abstract movements, each carrying a first-class
+  `conflict: {need, protection}`. Cast + lens + spine_ref carried
+  forward from spine so Scene Planner has one artifact to read.
+  `build_diary_prompt_ite` fork now folds beats as the PRIMARY
+  backbone, with the spine kept as "must-not-contradict" context.
+  Serialized via DAG: `story_spine → story_beats →
+  build_diary_prompt_ite → generate_diary_without_adapter_ite`.
+  See `story/story_beats.md`.
+- (c) ✅ 2026-08-01 — Scene Planner step landed at
+  `pipes/story/scripts/scene_planner.coffee`. Emits `scene_plan_json`:
+  one selected concrete scene per beat plus 2–3 candidates per beat
+  for provenance. First layer allowed to assign specific cast to
+  beat obligations, pick locations, describe physical action.
+  **Cast discipline enforced in code**: `present_cast` filtered
+  post-LLM to labels that exist in the spine's cast block; unnamed
+  passersby survive in the free-text `action`/`setting` fields.
+  `build_diary_prompt_ite` fork now folds scenes as the CONCRETE
+  backbone (one paragraph per scene, in order); beats become the
+  abstract dramatic obligation each scene must land; spine stays as
+  "must-not-contradict". Serialized via DAG: `story_spine →
+  story_beats → scene_planner → build_diary_prompt_ite →
+  generate_diary_without_adapter_ite`. See `story/scene_planner.md`.
+- (d) ✅ 2026-08-01 — Voice fidelity. `build_diary_prompt_ite`
+  reframed as a **letter from Jim to Friend**, retelling something
+  that happened to Tommy from half-forgotten memory. Adapter
+  carries cadence; prompt only fixes genre/framing/POV.
+
+  Planner-internal metadata stripped from the generator prompt:
+  `satisfies_conflict`, `lands_end_state`, `selection_rationale`,
+  `alternatives_considered`, `dialogue_beats`, `sensory_grounding`.
+  The pre-(d) run had the model **parroting those lines as
+  narration** ("The opportunity to restart the car is now
+  physically available"), which killed the voice. Beats block also
+  dropped from the generator prompt entirely — beats are useful for
+  Scene Planner input; scaffolding by generation time. Only
+  `protected_facts` from the Spine survive to the generator.
+  Jim's own past RAG passages promoted to the top of the prompt as
+  a register anchor (no "match cadence" instruction — that's the
+  adapter's job).
+
+  New voice-line text (in `build_diary_prompt_ite.coffee`):
+  > "You are Jim from St. John's, writing to a friend. This is a
+  > letter, not a chapter. Open with an address ('Hi, Friend' or
+  > similar). Warm, wry, digressive. Gossipy. It happened to
+  > `#{protagonist}`. You (Jim) were not the center of the action
+  > — you're retelling it the way you heard it, or half-remember
+  > it, or pieced it together after. Jim tells stories from
+  > half-forgotten memories. Details are hazy in places. Some
+  > things are third-hand. Jim wanders — a small unrelated
+  > observation or aside somewhere is welcome. Jim is never inside
+  > another character's head."
+
+  Confirmed working on the Tommy premise: chapter opens as a
+  letter, references Southwick and Tommy without immersing in
+  either, retells the roadside beats from third-hand memory.
+
+### Resume here (next session)
+
+The core four-layer split shipped and produced a good chapter.
+Nothing urgent left. Optional follow-ups in rough payoff order:
+
+1. **Kill the legacy 5-beat subgraph** —
+   `select_story_recipe` / `resolve_story_parts` / the
+   `story_parts`-fed atmosphere lines in the prompt. The four
+   layers are now authoritative; the legacy branch is atmosphere
+   only. Removing it simplifies both the UI and the prompt.
+2. **Per-scene KAG matching** — `collect_diary_kag_ite` still
+   matches Jim's own passages against the legacy 5-beat picks.
+   Rewire it to match against each `scene.action` /
+   `scene.outcome` instead, so the voice reference passages
+   actually align with the chosen staging.
+3. **Upstream the kvCache patch** — currently lives in
+   `~/writer/node_modules/@jahbini/pipeline/mlx/session_api.coffee`
+   and evaporates on `pnpm install`. Send to `@jahbini/pipeline`.
+4. **JSON Schema validation with ajv** — replace `shapeLooksOk`
+   in each planner step with real schemas, so failures produce
+   actionable messages instead of a `parse_error` blob.
+
+### One thing to double-check next session
+
+The user's run report mentioned `generate_diary_with_adapter_ite`
+ran for 248s, but its recipe entry has `depends_on: [never]`. Two
+possibilities: the UI is overriding `depends_on`, or the user
+manually switched it. Either way — worth confirming the recipe is
+being honored before assuming a report of `_with_adapter_` timings
+means the adapter path is active.
+
+### Landmines (unchanged from 2026-07-31)
+
+- `mlx/session_api.coffee` `generate()` needs the in-process
+  `mx.dispose?(llm.kvCache); llm.kvCache = null` patch at the top,
+  matching what `embed()` already does. `@frost-beta/llm` reuses
+  `this.kvCache` otherwise → mx.array crash. Patch lives in
+  `node_modules/` and **evaporates on `pnpm install`** — send
+  upstream.
+- Two `S.callLLM` steps on the same `modelDir` share the getSession
+  cache. They MUST have an explicit `depends_on` edge. Current DAG
+  serializes `story_spine` → `build_diary_prompt_ite` →
+  `generate_diary_without_adapter_ite`.
+- `temperature: 0` triggers div-by-zero in `@frost-beta/llm`'s
+  sampler. Use `0.05`.
+
+## Archived: 2026-07-31 handoff — Story Spine, Phase 1 (superseded)
+
+The Phase 1 spine emitted `story/questions/causal_spine/scenes` and
+was consumed by the prompt builder as a scene walk. That coupling
+was what produced the wrong story (Southwick prematurely staged as
+the opportunity when Tommy's old girlfriend was the premise atom).
+The four-layer split above is the fix. Historical Phase 1 details
+kept below for reference; do not use them as a spec.
 
 Built the `story` recipe — a fork of `diary_ite` with a new
 `story_spine` step that reads eight atom dropdowns

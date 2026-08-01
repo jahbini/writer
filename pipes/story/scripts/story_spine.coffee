@@ -92,130 +92,145 @@ extractJSON = (raw) ->
 shapeLooksOk = (spine) ->
   return false unless spine? and typeof spine is 'object'
   return false unless spine.story? and typeof spine.story is 'object'
-  return false unless Array.isArray(spine.scenes) and spine.scenes.length > 0
-  return false unless Array.isArray(spine.causal_spine) and spine.causal_spine.length > 0
-  return false unless spine.questions? and Array.isArray(spine.questions.central)
+  return false unless spine.questions? and typeof spine.questions is 'object'
+  return false unless Array.isArray(spine.questions.story)
   true
 
-buildPrompt = (S, storyParts, lib) ->
+resolveAtoms = (S, lib) ->
   atoms = lib.story_atoms
-  protagonist = pickAtom atoms.characters, S.param('protagonist')
-  antagonist  = pickAtom atoms.characters, S.param('antagonist', null)
-  witness     = pickAtom atoms.characters, S.param('witness', null)
-  ext_problem = pickAtom atoms.external_problems,    S.param('external_problem')
-  int_obstacle= pickAtom atoms.internal_obstacles,   S.param('internal_obstacle')
-  missed_opp  = pickAtom atoms.missed_opportunities, S.param('missed_opportunity')
-  primary_cons= pickAtom atoms.primary_consequences, S.param('primary_consequence')
-  lens        = pickAtom atoms.lenses,               S.param('lens', 'mind_worm')
+  picks =
+    protagonist:         pickAtom atoms.characters,           S.param('protagonist')
+    antagonist:          pickAtom atoms.characters,           S.param('antagonist', null)
+    witness:             pickAtom atoms.characters,           S.param('witness', null)
+    external_problem:    pickAtom atoms.external_problems,    S.param('external_problem')
+    internal_obstacle:   pickAtom atoms.internal_obstacles,   S.param('internal_obstacle')
+    missed_opportunity:  pickAtom atoms.missed_opportunities, S.param('missed_opportunity')
+    primary_consequence: pickAtom atoms.primary_consequences, S.param('primary_consequence')
+    lens:                pickAtom atoms.lenses,               S.param('lens', 'mind_worm')
 
-  throw new Error "protagonist atom not found for id '#{S.param('protagonist')}'" unless protagonist?
-  throw new Error "external_problem atom not found"   unless ext_problem?
-  throw new Error "internal_obstacle atom not found"  unless int_obstacle?
-  throw new Error "missed_opportunity atom not found" unless missed_opp?
-  throw new Error "primary_consequence atom not found" unless primary_cons?
+  throw new Error "protagonist atom not found for id '#{S.param('protagonist')}'" unless picks.protagonist?
+  throw new Error "external_problem atom not found"   unless picks.external_problem?
+  throw new Error "internal_obstacle atom not found"  unless picks.internal_obstacle?
+  throw new Error "missed_opportunity atom not found" unless picks.missed_opportunity?
+  throw new Error "primary_consequence atom not found" unless picks.primary_consequence?
+  picks
+
+buildPrompt = (picks) ->
+  # story_parts is deliberately NOT consumed here — it belongs to the
+  # legacy 5-beat diary flow. Feeding it in pollutes the spine with
+  # atmospheric details the model treats as required events.
+  { protagonist, antagonist, witness, external_problem, internal_obstacle,
+    missed_opportunity, primary_consequence, lens } = picks
+
+  # Explicit name list so the model can't quietly drop non-protagonist cast.
+  castNames = [protagonist.label]
+  castNames.push antagonist.label if antagonist?
+  castNames.push witness.label if witness?
+  castLine = castNames.join(', ')
 
   """
 You are the Story Spine Generator for the Writers Guild pipeline.
 
 Your purpose is NOT to write prose.
-Your purpose is to convert the atoms below into a deterministic story
-plan that later pipeline stages will expand into scenes and finished prose.
+Your purpose is NOT to plan scenes, decide who appears where, choose
+dialogue, or stage memories. Those are the responsibilities of later
+stages (Story Beats and Scene Planner).
 
-Think like a dramaturg and story architect, not a novelist.
+Your purpose is to capture DRAMATIC NECESSITY only: the immutable story
+facts, the dramatic axis, and the questions that drive the chapter.
 
-Preserve the author's story. Never invent a different story. Never
-improve it. Never solve it. Never write dialogue or narration.
+Think like a dramaturg locking in the story's obligations, not a
+director blocking a scene.
+
+Preserve the author's premise. Never invent a different story. Never
+improve it. Never solve it.
 
 ATOMS FOR THIS CHAPTER
 ---------------------------------------------------------------
 Protagonist:          #{formatAtom protagonist, 'character'}
 Antagonist:           #{formatAtom antagonist,  'character'}
 Witness:              #{formatAtom witness,     'character'}
-External problem:     #{formatAtom ext_problem, 'external_problem'}
-Internal obstacle:    #{formatAtom int_obstacle,'internal_obstacle'}
-Missed opportunity:   #{formatAtom missed_opp,  'missed_opportunity'}
-Primary consequence:  #{formatAtom primary_cons,'primary_consequence'}
+External problem:     #{formatAtom external_problem, 'external_problem'}
+Internal obstacle:    #{formatAtom internal_obstacle,'internal_obstacle'}
+Missed opportunity:   #{formatAtom missed_opportunity,  'missed_opportunity'}
+Primary consequence:  #{formatAtom primary_consequence,'primary_consequence'}
 Interpretive lens:    #{formatAtom lens,        'lens'}
 Lens interpretation:  #{lens?.interpretive_note ? '(none)'}
 
-The canonical_phrasing on each atom is the phrasing the author chose;
-carry it through in the "protected_facts" and "required_story_events"
-sections wherever possible.
+FULL CAST FOR THIS CHAPTER: #{castLine}
 
-STORY_PARTS CONTEXT (from the diary_ite recipe's earlier stages)
+ABSTRACTION LEVEL — READ CAREFULLY
 ---------------------------------------------------------------
-#{JSON.stringify(storyParts ? {}, null, 2).slice(0, 2000)}
+The Story Spine describes WHAT MUST HAPPEN, not HOW it happens.
+
+WRONG (staging — belongs to Scene Planner):
+  "Southwick appears at the roadside."
+  "Tommy remembers his old girlfriend."
+  "Old girlfriend arrives in a red car."
+
+RIGHT (dramatic necessity — belongs here):
+  "A genuine opportunity to receive help appears."
+  "The internal obstacle grows stronger than the immediate need."
+  "The choice becomes unavoidable."
+  "The consequence becomes physical."
+
+The Story Spine must NEVER decide:
+  - which specific character embodies the opportunity
+  - where a character stands or how they arrive
+  - what anyone says or remembers
+  - weather, setting choreography, or sensory staging
+
+Those are Scene Planner decisions, downstream. The premise atoms are
+facts; the Story Spine only asserts that certain dramatic movements
+must occur.
+
+The protagonist's LABEL may be named in "story.protagonist" because it
+is a fact, not staging. Other cast members must NOT be assigned
+dramatic roles at this layer (Scene Planner picks who embodies which
+beat obligation).
 
 OUTPUT CONTRACT
 ---------------------------------------------------------------
-Return valid JSON only. No prose outside the JSON. Structure:
+Return valid JSON only. No prose outside the JSON. No scenes. No
+causal chain. No blocking. Structure:
 
 {
   "story": {
     "title": "<short chapter title>",
-    "premise": "<one-sentence premise>",
-    "protagonist": "<name>",
+    "premise": "<one-sentence premise, abstract>",
+    "protagonist": "<protagonist label>",
     "dramatic_axis": {
       "external_problem":    "<echo the atom's canonical phrasing>",
       "internal_obstacle":   "<echo>",
       "missed_opportunity":  "<echo>",
       "primary_consequence": "<echo>"
     },
-    "starting_state": "<state at chapter open>",
-    "terminal_state": "<state at chapter close>",
-    "required_story_events": [ "<events that MUST occur, in order>" ],
-    "protected_facts":       [ "<facts later stages may never contradict>" ],
-    "generation_freedoms":   [ "<things later stages may invent>" ]
+    "starting_state": "<abstract dramatic state at chapter open>",
+    "terminal_state": "<abstract dramatic state at chapter close>",
+    "protected_facts":     [ "<3-6 immutable facts from the premise; no staging>" ],
+    "generation_freedoms": [ "<3-6 things later stages are free to invent>" ]
   },
   "questions": {
-    "central":    [ { "id": "q_<snake>", "text": "<question>" } ],
-    "supporting": [ { "id": "q_<snake>", "text": "<question>" } ]
-  },
-  "causal_spine": [
-    {
-      "id": "c1",
-      "event": "<one event, no prose>",
-      "depends_on": [],
-      "causes": ["c2"],
-      "opens_questions": ["q_<snake>"],
-      "closes_questions": []
-    }
-  ],
-  "scenes": [
-    {
-      "id": "s1",
-      "purpose": "<one of: establish_need | introduce_opportunity | force_a_decision | raise_stakes | reveal_information | lose_an_opportunity | resolve_a_question>",
-      "starting_state": "<state>",
-      "catalyst": "<what starts the scene>",
-      "required_events":   [ "<events that must appear>" ],
-      "dramatic_pressure": "<the pressure the scene applies>",
-      "required_choice":   "<or null>",
-      "required_reveal":   "<or null>",
-      "required_outcomes": [ "<must be true when scene ends>" ],
-      "ending_state": "<state at scene close>",
-      "carry_forward": {
-        "unanswered_questions":     ["q_<snake>"],
-        "unresolved_relationships": [],
-        "commitments":              [],
-        "risks":                    [],
-        "obligations":              [],
-        "new_knowledge":            []
-      },
-      "generation_freedoms": [ "<what later stages may invent>" ]
-    }
-  ]
+    "story":             [ { "id": "q_<snake>", "text": "<question that pulls the plot forward>" } ],
+    "reader_curiosities":[ { "id": "q_<snake>", "text": "<secondary question the reader wonders about>" } ],
+    "symbolic":          [ { "id": "q_<snake>", "text": "<optional lens/symbolic question; may be empty>" } ]
+  }
 }
 
-Rules for the plan:
-- Every scene must change the story state.
-- Every scene must open or close at least one question (except the final scene, which may only close).
-- Every scene must leave something unresolved unless it is the final scene.
-- The causal_spine chain must be non-empty and internally consistent
-  (every id in depends_on / causes must reference another c<n> entry).
-- Every question id used in causal_spine or carry_forward MUST be defined
-  in the questions.central or questions.supporting arrays.
-- Use the minimum number of scenes that carry the story from
-  starting_state to terminal_state without gaps.
+RULES
+- Story questions are primary (must have at least one, at most three).
+  They pull the plot forward. Example: "Will the protagonist admit
+  they need help?"
+- Reader curiosities are secondary (0-3). Example: "Is the car
+  permanently broken?"
+- Symbolic questions are optional (0-2). Example: "What does the
+  hexagram mean?" Symbolic questions must NEVER drive the plot.
+- protected_facts contain ONLY premise facts (from the atoms above),
+  never staging. Good: "The protagonist's car has broken down." Bad:
+  "Southwick pulls up in a truck."
+- Every string in this artifact must describe dramatic necessity, not
+  staging. If a string names a specific action, location, or line of
+  dialogue, it is wrong for this layer.
 
 Return the JSON now.
 """
@@ -224,12 +239,16 @@ Return the JSON now.
   desc: "Convert story atoms into a deterministic story spine (JSON plan)"
 
   action: (S) ->
-    storyParts = await S.need 'story_parts'
+    # story_parts is still declared in `needs:` (so it's guaranteed to
+    # exist when downstream stages want it), but the spine no longer
+    # embeds it into the prompt.
+    await S.need 'story_parts'
     lib = readAtomsLibrary()
     unless lib?.story_atoms?
       throw new Error "atoms library missing story_atoms block at data/jim_story_library.yaml"
 
-    prompt = buildPrompt S, storyParts, lib
+    picks = resolveAtoms S, lib
+    prompt = buildPrompt picks
 
     modelDir = S.param 'quantized_model_dir', null
     throw new Error "[story_spine] Missing quantized_model_dir param" unless modelDir?
@@ -264,6 +283,20 @@ Return the JSON now.
         parse_error: true
         raw: raw
         message: "story_spine could not extract a valid JSON shape (raise llm.maxTokens if the raw output ended mid-object)"
+
+    # Inject the cast from the raw atom picks — deterministic, not
+    # LLM-dependent. Downstream stages MUST have the cast names
+    # available regardless of what the model chose to keep in the plan.
+    # The prompt builder will use these to bind voice + inject a
+    # mandatory "cast" section into the diary prompt.
+    castOf = (atom) ->
+      return null unless atom?
+      { id: atom.id, label: atom.label }
+    spine.cast =
+      protagonist: castOf picks.protagonist
+      antagonist:  castOf picks.antagonist
+      witness:     castOf picks.witness
+    spine.lens = castOf picks.lens
 
     S.make 'story_spine_json', spine
     S.done()

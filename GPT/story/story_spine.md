@@ -1,23 +1,41 @@
 Step: `story_spine`
 Recipe: `story`
 Script: `pipes/story/scripts/story_spine.coffee`
+Repo of record: `~/writer` (writers-guild is retired)
 
 ## Purpose
 
-Sacred structural planner. Converts eight atom selections into a
-strict JSON plan a future prose stage will expand into one chapter.
-Contains no prose. Never invents a different story, never "improves"
-it, never solves it.
+Sacred dramaturg. The Story Spine is the SECOND of four planning
+layers and captures **dramatic necessity only**:
 
-Phase 1 (2026-07-31): sidecar — produces `story_spine_json` but nothing
-downstream consumes it yet. `generate_diary_without_adapter_ite` still
-handles the narrative output.
+```
+Premise (atom picks)
+   ↓
+Story Spine        ← this step
+   ↓
+Story Beats        ← next increment
+   ↓
+Scene Planner      ← later increment
+   ↓
+Prose (build_diary_prompt_ite → generate_diary_*_ite)
+```
+
+The Spine describes WHAT MUST HAPPEN, never HOW. It never decides:
+
+- which specific character embodies the missed opportunity
+- where anyone stands or how they arrive
+- what anyone says or remembers
+- weather, setting choreography, sensory staging
+
+Those are Scene Planner decisions. The Spine only asserts that the
+dramatic axis must move and that certain premise facts must hold.
 
 ## Inputs
 
 Artifact:
-- `story_parts` — resolved from the legacy 5-beat selection. Only used
-  as context in the prompt (first 2000 chars of pretty-printed JSON).
+- `story_parts` — `await S.need`'d for artifact wiring only. Never
+  embedded in the prompt (doing so caused 34-item required_events
+  pollution before 2026-08-01).
 
 UI dropdowns (8), all backed by `data/jim_story_library.yaml/story_atoms/*`:
 
@@ -30,113 +48,174 @@ Runtime config (nested `llm:` block on the step):
 ```yaml
 quantized_model_dir: build/model4
 llm:
-  maxTokens: 4000       # 2000 truncated mid-scene in the failing run
-  temperature: 0.05     # near-deterministic; see "Sampler gotcha"
+  maxTokens: 4000
+  temperature: 0.05     # NOT 0 — see "Sampler gotcha"
   topP: 0.95
 ```
 
 ## Output
 
-Artifact `story_spine_json` → `out/story_spine.json`. Four top-level
-sections — `story`, `questions`, `causal_spine`, `scenes`. Full contract
-in `pipes/story/schemas/story_spine.schema.json`. In-step validation is
-only a shape check (`shapeLooksOk`); full JSON Schema validation is a
-Phase 1.5 addition if the model regularly emits invalid shapes.
+Artifact `story_spine_json` → `out/story_spine.json`. **Two top-level
+sections only** (as of 2026-08-01):
 
-Confirmed working on 2026-07-31: "The Road That Flickers" — 4 scenes
-(establish_need → introduce_opportunity → force_a_decision →
-reveal_information), 8 causal steps, 3 central questions, valid
-dramatic_axis with canonical phrasing echoed from the atoms.
+```
+{
+  "story": {
+    "title": "...",
+    "premise": "...",              // one sentence, abstract
+    "protagonist": "...",           // label (a fact, not staging)
+    "dramatic_axis": {
+      "external_problem": "...",
+      "internal_obstacle": "...",
+      "missed_opportunity": "...",
+      "primary_consequence": "..."
+    },
+    "starting_state": "...",        // abstract dramatic state
+    "terminal_state": "...",        // abstract dramatic state
+    "protected_facts": [ ... ],     // 3–6 premise facts, no staging
+    "generation_freedoms": [ ... ]  // 3–6 things later stages may invent
+  },
+  "questions": {
+    "story":              [ { id, text }, ... ],  // 1–3, primary; drive plot
+    "reader_curiosities": [ { id, text }, ... ],  // 0–3, secondary
+    "symbolic":           [ { id, text }, ... ]   // 0–2, optional, non-driving
+  }
+}
+```
 
-On unrecoverable failure, saves `{parse_error: true, raw, message}` so
-the artifact explains what the model actually produced.
+Plus deterministically-injected `cast` and `lens` blocks (from the
+raw atom picks, never LLM-generated):
+
+```
+"cast":   { "protagonist": {id, label}, "antagonist": {...}, "witness": {...} },
+"lens":   { id, label }
+```
+
+**Explicitly removed** (2026-08-01): `causal_spine`, `scenes`,
+`required_story_events`. Those were the source of premature staging
+(the model decided Southwick was the opportunity because the spine
+schema forced it to pick a scene realization). They belong to Story
+Beats and Scene Planner, not here.
 
 ## Prompt
 
-Built inline in `buildPrompt`. Structure:
-1. The "Story Spine Generator" contract (never invent / improve / solve).
-2. The eight atoms formatted with `id`, `label`, `canonical_phrasing`,
-   tags/role_hints in a fixed table. The lens's `interpretive_note` is
-   included as its own line.
-3. `JSON.stringify(story_parts, null, 2).slice(0, 2000)` as context.
-4. The output contract (full JSON shape with an enum for `scene.purpose`).
-5. Structural rules (every scene changes state, every scene opens or
-   closes a question, id references must resolve, etc.).
+Built inline in `buildPrompt(picks)`. Structure:
+
+1. "Story Spine Generator" role — dramaturg, not novelist, not
+   director.
+2. The eight atoms formatted with id / label / canonical_phrasing /
+   tags / role_hints. Lens `interpretive_note` included as its own line.
+3. FULL CAST list (names for reference, not for role assignment at
+   this layer).
+4. Explicit **WRONG vs RIGHT** examples of abstraction level:
+   - WRONG: "Southwick appears at the roadside."
+   - RIGHT: "A genuine opportunity to receive help appears."
+   - WRONG: "Tommy remembers his old girlfriend."
+   - RIGHT: "The internal obstacle grows stronger than the immediate need."
+5. Output contract (JSON shape shown above, question kinds split).
+6. Rules: exactly one primary story question minimum; symbolic
+   questions must not drive plot; protected_facts are premise-only,
+   never staging.
+
+`story_parts` is NEVER embedded in the prompt.
 
 ## JSON extraction
 
-Reused patterns from writers-guild's `oracle_brief.coffee`:
+Reused from earlier `oracle_brief.coffee`:
 
-- `stripMlxFraming` — drops the `==========\n…\n==========\n<stats>` bracket
-  the mlx_lm framing adds.
-- `findBalancedJson` — walks brace depth ignoring string content, returns
-  `{json, truncated}`.
-- `repairTruncatedJson` — closes any open string, trims trailing partial
-  keys / dangling commas, closes stacked arrays/objects in reverse order.
-- `extractJSON` — tries a straight parse; on failure with `truncated:
-  true`, attempts repair. On failure with `truncated: false`, gives up
-  (the JSON was malformed, not truncated).
-
-Verified against the truncated 2026-07-31 08:11 output: repair
-reconstructed a valid spine (4 sections, 3 scenes, 6 causal steps).
+- `stripMlxFraming` — drops mlx_lm's `===` framing bracket.
+- `findBalancedJson` — walks brace depth ignoring string content;
+  returns `{json, truncated}`.
+- `repairTruncatedJson` — closes open strings, trims dangling
+  keys/commas, closes stacked braces/brackets in reverse order.
+- `extractJSON` — straight parse; if that fails and truncated, tries
+  repair; otherwise `null`.
 
 ## Sampler gotcha
 
-`temperature: 0` triggers a division-by-zero deep inside
-`@frost-beta/llm`'s sampler → `Error converting "this" to mx.array` at
-`token.tolist()`. Use `0.05` (near-greedy, no numerical edge case) for
-reproducibility. `topP: 1.0` also caused problems in some paths; `0.95`
-is safe.
+`temperature: 0` triggers division-by-zero deep in `@frost-beta/llm`'s
+sampler → `Error converting "this" to mx.array` at `token.tolist()`.
+Use `0.05` (near-greedy, no numerical edge case). `topP: 1.0` also
+misbehaves; `0.95` is safe.
 
 ## Session sharing (critical)
 
-`mlx/llm_dispatch.coffee` caches LLM sessions by `modelDir::adapterPath`.
-Both `story_spine` and `generate_diary_without_adapter_ite` use
-`build/model4` with no adapter, so **they share the exact same LLM
-object**. Two consequences:
+`mlx/llm_dispatch.coffee` caches LLM sessions by
+`modelDir::adapterPath`. `story_spine` and
+`generate_diary_without_adapter_ite` both use `build/model4` with no
+adapter, so they share the same LLM object. Two consequences:
 
-**(a) kvCache stays populated across calls.** `@frost-beta/llm`'s
-`LLM.generate` reuses `this.kvCache` when no explicit cache is passed
-(`llm.js:100-108`), and shipped `session_api.coffee` `generate()` did
-NOT reset it. Consecutive generations position-index against stale KV
-state → bad token → `predict/tolist()` crash.
+**(a) kvCache stays populated across calls.** Shipped
+`session_api.coffee` `generate()` did NOT reset it; consecutive
+generations index against stale KV → crash.
 
-Fix landed 2026-07-31 in `node_modules/@jahbini/pipeline/mlx/session_api.coffee`:
-add `mx.dispose?(llm.kvCache) if llm.kvCache; llm.kvCache = null` at the
-top of `generate()`, matching what `embed()` already does. **This patch
-lives in `node_modules/` and will evaporate on `pnpm install`** — needs
-to be sent upstream, and to be re-applied after every install until it
-lands there.
+Fix in `node_modules/@jahbini/pipeline/mlx/session_api.coffee`:
+`mx.dispose?(llm.kvCache) if llm.kvCache; llm.kvCache = null` at the
+top of `generate()`, matching `embed()`. **Evaporates on
+`pnpm install`** — needs upstream.
 
-**(b) Concurrent generators on the same session race.** If two steps
-sharing the session run in parallel, one's reset can null the other's
-cache mid-flight → `Error converting "this" to mx.array` at
-`base.js:231` (inside the prefill `mx.core.tidy` block). Fix: serialize
-them in the DAG. `story_spine.depends_on: [resolve_story_parts,
-generate_diary_without_adapter_ite]` — story_spine can only run *after*
-the diary generator, never in parallel with it.
+**(b) Concurrent generators on the same session race.** Serialize via
+DAG. Current wiring:
+`build_diary_prompt_ite.depends_on: [collect_diary_kag_ite, story_spine]`
+and `generate_diary_without_adapter_ite.depends_on: [build_diary_prompt_ite]`
+force serialization naturally.
 
-Rule for future MLX steps: **any two steps that call `S.callLLM` on the
-same `modelDir` (with the same adapter, or both without one) MUST have
-an explicit `depends_on` edge between them.** The runner will run
-independent steps concurrently by default; the session cache doesn't.
+Rule for future MLX steps: **any two steps that `S.callLLM` on the
+same `modelDir` MUST have an explicit `depends_on` edge.**
 
-## Retry loop
+## What consumes this (Increment d, revised)
 
-None. At temperature 0.05 the model output is nearly deterministic;
-retrying the same prompt would produce nearly-identical failures. Single
-shot; if `shapeLooksOk` fails, save `{parse_error, raw}` and let the
-human raise `maxTokens` or edit the prompt.
+Only `story.protected_facts` is folded into the generator's prompt
+(as "Things that must stay true (from the premise)"). Everything
+else in the Spine — `dramatic_axis`, `starting_state`,
+`terminal_state`, `generation_freedoms`, `questions.*` — is
+planner-internal, consumed only by `story_beats` and (indirectly
+through beats) by `scene_planner`. It never reaches the generator.
 
-## Known pitfalls
+Reason: exposing axis / questions / abstract states to the
+generator caused it to parrot dramaturg language as narration.
+The Spine's role at generation time is a **guardrail** (via
+`protected_facts`), not a scaffold.
 
-- The `mlx:` block name is INCORRECT for `S.callLLM` — use `llm:`. The
-  `mlx:` block feeds the Python-subprocess path (`S.callMLX`). Mixing
-  them is silent: `S.param('llm', null)` returns null, the step falls
-  through to `S.param('mlx', null)`, and passes CLI-flag-shaped keys
-  (`max-tokens`) that `L.callLLM` doesn't understand → defaults kick in.
-- `story_parts` is currently the legacy 5-beat resolution. The atoms
-  the step actually reads are the 8 UI selections; `story_parts` is
-  just prompt context. When Phase 2 wires the spine into the prompt
-  builder, `story_parts` and the atoms both need to survive to the
-  chapter.
+Cast and lens are carried forward: `story_beats_json` carries them
+from here; `scene_plan_json` carries them from beats; and
+`build_diary_prompt_ite` reads cast from `story_spine_json.cast`
+to build the "People in the story" block.
+
+## What comes next (roadmap)
+
+Increment (a) — this one — landed 2026-08-01. The Spine now describes
+dramatic necessity only.
+
+Increment (b): add `story_beats` step. Reads `story_spine_json`,
+emits `story_beats_json` — an ordered list of abstract dramatic
+movements. Each beat:
+
+```
+{
+  id, purpose, dramatic_function,
+  required_transition, required_end_state,
+  conflict: { need, protection },          // first-class object
+  required_story_events, generation_freedoms
+}
+```
+
+Beats still never name Southwick, never stage memory. Tommy's
+backbone should read: "Breakdown creates dependence." → "Opportunity
+to receive help appears." → "Pride defeats need." → "Consequence
+becomes physical."
+
+Increment (c): add `scene_planner` step. Per beat, emit N Scene
+Candidates that stage the same dramatic obligation differently, pick
+the strongest. Only here does the cast get assigned to dramatic
+roles ("old girlfriend embodies the opportunity for Tommy"). Emits
+`scene_plan_json`.
+
+Increment (d): rewire `build_diary_prompt_ite` to consume
+`scene_plan_json` (concrete staging) instead of the current spine
+fold-through.
+
+Narrative voice at every layer: **first-person Jim, always.** Even
+when protagonist ≠ Jim, Jim narrates as observer/witness/recounter.
+The LoRA/base model was trained on Jim's voice; close-third loses it.
+Do NOT bind voice to `spine.cast.protagonist.label`.

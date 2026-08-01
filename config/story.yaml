@@ -49,6 +49,10 @@ artifacts:
     target: out/diary_base.txt
   story_spine_json:
     target: out/story_spine.json
+  story_beats_json:
+    target: out/story_beats.json
+  scene_plan_json:
+    target: out/scene_plan.json
 
 load_library:
   run: story/load_library.coffee
@@ -110,11 +114,63 @@ story_spine:
     # 2000 truncated the response mid-scene (Generation: 2000/2000 tokens
     # in the failing run). 4000 is comfortable headroom for the full
     # 4-section structured plan; raise if the model still runs out.
-    maxTokens: 4000
+    # Actual spine output was ~2.4KB at maxTokens 4000 — plenty of headroom
+    # to cut. Wall-clock is roughly linear in output tokens generated.
+    maxTokens: 2500
     # temperature: 0 triggers a div-by-zero deep in @frost-beta/llm's
     # sampler ("Error converting 'this' to mx.array"). 0.05 is
     # near-deterministic without hitting the numerical edge case.
     temperature: 0.05
+    topP: 0.95
+
+# ─── Story Beats (Increment b — abstract dramatic movements) ────────
+# Second planning layer. Reads story_spine_json (dramatic necessity)
+# and emits story_beats_json — an ordered list of 3–5 abstract beats,
+# each with a first-class conflict {need, protection}. Beats never
+# stage; Scene Planner (Increment c) is the layer that decides which
+# specific cast member embodies which beat obligation.
+#
+# Serializes against story_spine on the shared getSession cache (both
+# use build/model4 with no adapter). No new UI knobs — the beats are
+# purely a function of the Spine.
+story_beats:
+  run: story_beats.coffee
+  depends_on: [story_spine]
+  needs: [story_spine_json]
+  makes: [story_beats_json]
+  quantized_model_dir: build/model4
+  llm:
+    # Actual beats output was ~4.5KB at maxTokens 3000 — trim.
+    maxTokens: 2000
+    temperature: 0.05
+    topP: 0.95
+
+# ─── Scene Planner (Increment c — concrete staging) ─────────────────
+# Fourth layer. Reads story_beats_json (abstract movements + carried
+# cast/lens/spine_ref) and produces scene_plan_json: 2–3 Scene
+# Candidates per beat and one selected candidate per beat.
+#
+# This is the FIRST layer allowed to assign specific cast to dramatic
+# roles, pick locations, and describe physical action. Cast discipline
+# is enforced in code after the LLM call: present_cast is filtered to
+# names that exist in the spine's cast block. Unnamed passersby are
+# free text inside `action`/`setting`.
+#
+# Serializes against story_spine and story_beats on the shared
+# getSession cache (all three use build/model4 with no adapter).
+scene_planner:
+  run: scene_planner.coffee
+  depends_on: [story_beats]
+  needs: [story_beats_json]
+  makes: [scene_plan_json]
+  quantized_model_dir: build/model4
+  llm:
+    # After dropping the standalone `candidates` array (2026-08-01
+    # revision) the schema is roughly half its previous size. 3000
+    # tokens is comfortable headroom for ~4 selected scenes with tight
+    # 1–2 sentence fields.
+    maxTokens: 3000
+    temperature: 0.1
     topP: 0.95
 
 collect_diary_kag_ite:
@@ -134,8 +190,8 @@ build_diary_prompt_ite:
   # CWD/scripts/ wins over EXEC/scripts/, so this override picks up the
   # forked step that folds story_spine_json into the prompt.
   run: build_diary_prompt_ite.coffee
-  depends_on: [collect_diary_kag_ite, story_spine]
-  needs: [story_parts, diary_kag, story_spine_json]
+  depends_on: [collect_diary_kag_ite, scene_planner]
+  needs: [story_parts, diary_kag, story_spine_json, story_beats_json, scene_plan_json]
   makes: [diary_prompt_text]
   # Chunk tactic lives HERE now: build_diary_prompt_ite folds each event's
   # matched story passages (Jim's own words) into diary_prompt_text, which both

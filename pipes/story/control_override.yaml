@@ -1,1 +1,24 @@
-pipeline: train_lora
+pipeline: story
+story_spine:
+  protagonist: tommy
+  antagonist: old_girlfriend
+  witness: southwick
+  external_problem: car_broke_down
+  internal_obstacle: embarrassed
+  missed_opportunity: ask_for_help
+  primary_consequence: walk_home
+  lens: four_forces
+generate_diary_with_adapter_ite:
+  adapter_path: build/adapter/0000285_adapters.safetensors
+select_story_recipe:
+  scene: cafe
+  arrival: A fisherman
+  disturbance: fear
+  reflection: growth
+  realization: truth
+collect_diary_kag_ite:
+  scene_emotion: contentment
+  arrival_emotion: contentment
+  disturbance_emotion: frustration
+  reflection_emotion: contentment
+  realization_emotion: joy
