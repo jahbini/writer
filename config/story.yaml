@@ -27,8 +27,6 @@ run:
 artifacts:
   story_library:
     target: out/story_library.json
-  story_recipe:
-    target: out/story_recipe.json
   story_parts:
     target: out/story_parts.json
   diary_kag:
@@ -47,12 +45,20 @@ artifacts:
     target: out/diary_adapted.txt
   diary_base_text:
     target: out/diary_base.txt
+  story_outline_json:
+    target: out/story_outline.json
   story_spine_json:
     target: out/story_spine.json
   story_beats_json:
     target: out/story_beats.json
   scene_plan_json:
     target: out/scene_plan.json
+  archived_chapter:
+    target: out/archived_chapter.json
+  chapter_state_json:
+    target: out/chapter_state.json
+  chapter_context:
+    target: out/chapter_context.json
 
 load_library:
   run: story/load_library.coffee
@@ -61,67 +67,64 @@ load_library:
   makes: [story_library]
   library_file: data/jim_story_library.yaml
 
-select_story_recipe:
-  run: story/select_story_recipe.coffee
-  depends_on: [load_library]
-  needs: [story_library]
-  makes: [story_recipe]
-  scene: [ UI_dropdown, data/jim_story_library.yaml/library/scenes ]
-  arrival: [ UI_dropdown, data/jim_story_library.yaml/library/characters ]
-  disturbance: [ UI_dropdown, data/jim_story_library.yaml/library/disturbances ]
-  reflection: [ UI_dropdown, data/jim_story_library.yaml/library/reflections ]
-  realization: [ UI_dropdown, data/jim_story_library.yaml/library/realizations ]
+# ─── Chapter Context (Increment e5 — single source for chapter_number)
+# ONE UI textarea. All chapter-scoped steps (story_spine,
+# state_extractor, archive_chapter) read from this artifact instead
+# of duplicating the knob. Users set it once here.
+chapter_context:
+  run: chapter_context.coffee
+  depends_on: []
+  needs: []
+  makes: [chapter_context]
+  chapter_number: [ UI_textarea, "1" ]
 
-resolve_story_parts:
-  run: story/resolve_story_parts.coffee
-  depends_on: [select_story_recipe]
-  needs: [story_library, story_recipe]
+# ─── Stub Story Parts (Increment e7 — replaces legacy 5-beat chain)
+# The vendored generate_diary_*_ite steps `L.need 'story_parts'`. This
+# empty-object stub satisfies them without dragging the 5 legacy diary
+# dropdowns back into the UI. Zero UI knobs, zero LLM.
+stub_story_parts:
+  run: stub_story_parts.coffee
+  depends_on: []
+  needs: []
   makes: [story_parts]
 
-# ─── Story Spine (Phase 2 — upstream of the prompt builder) ────────
-# Local sacred step at pipes/story/scripts/story_spine.coffee. Runner
-# resolves `run:` under CWD/scripts/ first, so the local script wins
-# over any similarly-named runner-bundled script.
+# ─── Story Outline (Increment e1 — top layer, whole-story plan) ────
+# Sidecar in e1: emits `story_outline_json` from a free-form UI
+# description + the atoms library. Nothing downstream reads it yet.
+# In e3, `story_spine` will start selecting one entry from
+# `chapter_order` per run based on a chapter_number param.
 #
-# story_spine now feeds build_diary_prompt_ite (Phase 2 wiring below),
-# so it runs BEFORE the prompt builder — which naturally serializes it
-# against generate_diary_without_adapter_ite (they can never overlap
-# on the shared getSession cache).
-story_spine:
-  run: story_spine.coffee
-  depends_on: [resolve_story_parts]
-  needs: [story_parts]
-  makes: [story_spine_json]
-
-  # Character slots (protagonist required; others may be left blank).
-  protagonist: [ UI_dropdown, data/jim_story_library.yaml/story_atoms/characters ]
-  antagonist:  [ UI_dropdown, data/jim_story_library.yaml/story_atoms/characters ]
-  witness:     [ UI_dropdown, data/jim_story_library.yaml/story_atoms/characters ]
-
-  # Dramatic axis (all required).
-  external_problem:    [ UI_dropdown, data/jim_story_library.yaml/story_atoms/external_problems ]
-  internal_obstacle:   [ UI_dropdown, data/jim_story_library.yaml/story_atoms/internal_obstacles ]
-  missed_opportunity:  [ UI_dropdown, data/jim_story_library.yaml/story_atoms/missed_opportunities ]
-  primary_consequence: [ UI_dropdown, data/jim_story_library.yaml/story_atoms/primary_consequences ]
-
-  # Interpretive lens through which the finished chapter reads.
-  lens: [ UI_dropdown, data/jim_story_library.yaml/story_atoms/lenses ]
-
-  # Fast in-process node-mlx generation (S.callLLM), NOT the Python
-  # subprocess path (S.callMLX). Same knobs generate_diary_*_ite use.
+# Serialized against the other MLX steps on the shared getSession
+# cache (both use build/model4 with no adapter).
+story_outline:
+  run: story_outline.coffee
+  depends_on: [load_library]
+  needs: [story_library]
+  makes: [story_outline_json]
+  # Free-form textarea. User types a paragraph or two describing the
+  # story arc. The step calls the LLM to structure it into an outline
+  # with 3-6 chapters, each with inherited/ending state and a
+  # concrete next_chapter_trigger.
+  story_description: [ UI_textarea, "" ]
   quantized_model_dir: build/model4
   llm:
-    # 2000 truncated the response mid-scene (Generation: 2000/2000 tokens
-    # in the failing run). 4000 is comfortable headroom for the full
-    # 4-section structured plan; raise if the model still runs out.
-    # Actual spine output was ~2.4KB at maxTokens 4000 — plenty of headroom
-    # to cut. Wall-clock is roughly linear in output tokens generated.
-    maxTokens: 2500
-    # temperature: 0 triggers a div-by-zero deep in @frost-beta/llm's
-    # sampler ("Error converting 'this' to mx.array"). 0.05 is
-    # near-deterministic without hitting the numerical edge case.
+    # Whole-story outline is verbose: 3-6 chapters × ~14 fields each,
+    # plus 6-10 questions and obligations. 5000 leaves headroom.
+    maxTokens: 5000
     temperature: 0.05
     topP: 0.95
+
+# ─── Story Spine ──────────────────────────────────────────────────
+# Deterministic transform of story_outline_json[chapter_number-1].
+# NO LLM CALL. NO UI KNOBS. When the outline is missing or shape-broken
+# this step throws — the legacy atom-picker fallback was removed in
+# e7 (2026-08-02) because it silently produced Tommy stories when the
+# outline generation failed.
+story_spine:
+  run: story_spine.coffee
+  depends_on: [story_outline, chapter_context]
+  needs: [story_outline_json, chapter_context]
+  makes: [story_spine_json]
 
 # ─── Story Beats (Increment b — abstract dramatic movements) ────────
 # Second planning layer. Reads story_spine_json (dramatic necessity)
@@ -174,11 +177,19 @@ scene_planner:
     topP: 0.95
 
 collect_diary_kag_ite:
-  run: diary_ite/collect_diary_kag_ite.coffee
-  depends_on: [resolve_story_parts]
-  needs: [story_parts]
+  # LOCAL FORK at pipes/story/scripts/collect_diary_kag_ite.coffee
+  # (Increment e6, 2026-08-02). CWD/scripts/ wins over EXEC/scripts/,
+  # so the local script takes over. Now derives per-kind emotions
+  # from story_beats_json's dramatic_functions; the UI dropdowns
+  # below act as manual OVERRIDES when non-empty.
+  run: collect_diary_kag_ite.coffee
+  depends_on: [story_beats]
+  needs: [story_beats_json]
   makes: [diary_kag]
   per_event_match_limit: 3
+  # UI overrides. Leave blank to use the auto-derived emotion (from
+  # the corresponding beat's dramatic_function). Set to force a
+  # specific emotion for that slot.
   scene_emotion: [ UI_dropdown, db/kag_keywords, "" ]
   arrival_emotion: [ UI_dropdown, db/kag_keywords, "" ]
   disturbance_emotion: [ UI_dropdown, db/kag_keywords, "" ]
@@ -191,7 +202,7 @@ build_diary_prompt_ite:
   # forked step that folds story_spine_json into the prompt.
   run: build_diary_prompt_ite.coffee
   depends_on: [collect_diary_kag_ite, scene_planner]
-  needs: [story_parts, diary_kag, story_spine_json, story_beats_json, scene_plan_json]
+  needs: [diary_kag, story_spine_json, story_beats_json, scene_plan_json]
   makes: [diary_prompt_text]
   # Chunk tactic lives HERE now: build_diary_prompt_ite folds each event's
   # matched story passages (Jim's own words) into diary_prompt_text, which both
@@ -222,3 +233,60 @@ generate_diary_without_adapter_ite:
   llm:
     maxTokens: 2000
     temperature: 0.7
+
+# ─── State Extractor (Increment e4 — continuity validation) ─────────
+# After generation, reads the finished chapter + the planned outline
+# entry and extracts actual state changes / questions / obligations /
+# new protected facts / continuity_validation. The next chapter's
+# story_spine (e3) already knows how to read chapter_state.json —
+# archive_chapter (e2) has this file in its CHAPTER_FILES list, so
+# it gets copied to out/chapters/ch_<N>/chapter_state.json for the
+# next run to pick up.
+#
+# Serialized against the other MLX steps on the shared getSession
+# cache.
+state_extractor:
+  run: state_extractor.coffee
+  # depends_on MUST reference the enabled generator by name; the
+  # runner prunes [never]-gated steps entirely, so we can't list both.
+  # The user's override (pipes/story/override/story.yaml) currently
+  # enables generate_diary_with_adapter_ite and gates the base one to
+  # [never]. IF YOU FLIP THE OVERRIDE, also flip both fields below:
+  #   depends_on: [generate_diary_without_adapter_ite, chapter_context]
+  #   needs:      [diary_base_text, story_outline_json, chapter_context]
+  # The script itself reads whichever text file exists on disk, so
+  # only these two lines need updating on a flip.
+  # (e5) chapter_number comes from `chapter_context` artifact.
+  depends_on: [generate_diary_with_adapter_ite, chapter_context]
+  needs: [diary_adapted_text, story_outline_json, chapter_context]
+  makes: [chapter_state_json]
+  quantized_model_dir: build/model4
+  llm:
+    # Output is compact (arrays of short strings) but the prompt
+    # embeds the full chapter text — leave headroom.
+    maxTokens: 3000
+    temperature: 0.05
+    topP: 0.95
+
+# ─── Archive Chapter (Increment e2 — per-chapter output layout) ─────
+# LAST step in the DAG. After generation writes out/diary_base.txt and
+# friends, this step copies the chapter-specific artifacts into
+# out/chapters/ch_<N>/ and updates the out/latest symlink.
+#
+# story_outline_json is deliberately NOT archived here — it is
+# story-scoped, one per arc, and stays at out/story_outline.json so
+# every chapter run reads the same global outline.
+#
+# In (e3) the chapter_number will also be consumed by story_spine to
+# pick chapter_order[N-1] from the outline; for now (e2) it only
+# controls where this run's artifacts get archived.
+archive_chapter:
+  run: archive_chapter.coffee
+  # Gate on state_extractor only; the generator artifact name varies
+  # by which generator path is enabled (see state_extractor comment
+  # above). The archiver reads generator outputs from disk if they
+  # exist, silently skipping ones that don't.
+  # (e5) chapter_number comes from `chapter_context` artifact.
+  depends_on: [state_extractor, chapter_context]
+  needs: [chapter_state_json, chapter_context]
+  makes: [archived_chapter]

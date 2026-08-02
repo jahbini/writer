@@ -2,301 +2,167 @@ fs   = require 'fs'
 path = require 'path'
 yaml = require 'js-yaml'
 
-# ─── Story Spine step ─────────────────────────────────────────────────
-# Reads the 8 UI selections (protagonist/antagonist/witness + 4 dramatic
-# axis atoms + lens) plus story_parts, calls MLX with a strict planning
-# prompt, and produces story_spine_json — a deterministic structural
-# plan for a single chapter. Contains no prose.
+# ─── Story Spine step (post-e7 cleanup) ───────────────────────────────
+# DETERMINISTIC transform of story_outline_json[chapter_number-1] into
+# the spine shape downstream steps consume. NO LLM CALL. NO UI KNOBS.
+#
+# The legacy atom-picker + LLM fallback was removed 2026-08-02 (e7).
+# When it existed, an outline shape-check failure would silently
+# degrade to picking atoms from UI dropdowns — which meant a broken
+# outline produced a plausible Tommy story instead of an error. Bad.
+# Now: broken outline → hard throw.
 
 readAtomsLibrary = ->
-  # CWD when the runner invokes a step is the pipe's working dir
-  # (e.g. pipes/story/). The library lives at data/jim_story_library.yaml.
   libPath = path.join process.cwd(), 'data', 'jim_story_library.yaml'
   yaml.load fs.readFileSync(libPath, 'utf8')
 
-pickAtom = (list, id) ->
-  return null unless id? and id.length
-  for entry in (list ? [])
-    return entry if entry?.id is id
-  null
+coerceJSON = (value) ->
+  return value unless typeof value is 'string'
+  try JSON.parse value catch then value
 
-formatAtom = (atom, kind) ->
-  return "(unspecified)" unless atom?
-  extras = []
-  extras.push "tags: #{atom.tags.join(', ')}" if atom.tags?.length
-  extras.push "roles: #{atom.role_hints.join(', ')}" if atom.role_hints?.length
-  tail = if extras.length then "  [#{extras.join(' | ')}]" else ''
-  phrasing = if atom.canonical_phrasing? then "  — “#{atom.canonical_phrasing}”" else ''
-  "#{atom.label} (id: #{atom.id})#{phrasing}#{tail}"
+parseChapterNumber = (raw) ->
+  n = parseInt String(raw ? '1').trim(), 10
+  throw new Error "[story_spine] chapter_number must be a positive integer; got '#{raw}'" if isNaN(n) or n < 1
+  n
 
-stripMlxFraming = (text) ->
-  return '' unless typeof text is 'string'
-  text
-    .replace(/^={5,}\s*\n/, '')
-    .replace(/\n={5,}[\s\S]*$/, '')
-
-findBalancedJson = (text) ->
-  start = text.indexOf('{')
-  return null if start < 0
-  depth = 0
-  inString = false
-  escape = false
-  for i in [start...text.length]
-    ch = text[i]
-    if escape then escape = false
-    else if ch is '\\' and inString then escape = true
-    else if ch is '"' then inString = !inString
-    else if not inString
-      if ch is '{' then depth++
-      else if ch is '}'
-        depth--
-        return { json: text[start..i], truncated: false } if depth is 0
-  { json: text[start..], truncated: true }
-
-# Best-effort repair for a truncated JSON object: close any open string,
-# trim trailing partial keys / dangling commas, then close arrays/objects
-# in reverse stack order.
-repairTruncatedJson = (text) ->
-  inString = false
-  escape = false
-  stack = []
-  lastSafeEnd = -1
-  for i in [0...text.length]
-    ch = text[i]
-    if escape then escape = false
-    else if ch is '\\' and inString then escape = true
-    else if ch is '"'
-      inString = !inString
-      lastSafeEnd = i if not inString
-    else if not inString
-      if ch is '{' or ch is '[' then stack.push ch
-      else if ch is '}' or ch is ']' then stack.pop()
-      if /[\s\}\]\d"]/.test(ch) then lastSafeEnd = i
-  head = if lastSafeEnd >= 0 then text[..lastSafeEnd] else text
-  head = head.replace(/,\s*"?[A-Za-z_]*\s*:?\s*$/, '')
-  head = head.replace(/,\s*$/, '')
-  stack.reverse().reduce(((acc, open) ->
-    acc + (if open is '{' then '}' else ']')), head)
-
-extractJSON = (raw) ->
-  return null unless raw?
-  cleaned = stripMlxFraming raw
-  found = findBalancedJson cleaned
-  return null unless found?
-  try return JSON.parse found.json catch then null
-  # First parse failed. If truncated, try repair; otherwise give up.
-  return null unless found.truncated
-  try return JSON.parse(repairTruncatedJson found.json) catch then null
-  null
-
-shapeLooksOk = (spine) ->
-  return false unless spine? and typeof spine is 'object'
-  return false unless spine.story? and typeof spine.story is 'object'
-  return false unless spine.questions? and typeof spine.questions is 'object'
-  return false unless Array.isArray(spine.questions.story)
+outlineIsUsable = (outline) ->
+  return false unless outline? and typeof outline is 'object'
+  return false if outline.parse_error
+  return false unless Array.isArray(outline.chapter_order) and outline.chapter_order.length
+  return false unless outline.cast?.protagonist_label? and outline.lens_label?
   true
 
-resolveAtoms = (S, lib) ->
-  atoms = lib.story_atoms
-  picks =
-    protagonist:         pickAtom atoms.characters,           S.param('protagonist')
-    antagonist:          pickAtom atoms.characters,           S.param('antagonist', null)
-    witness:             pickAtom atoms.characters,           S.param('witness', null)
-    external_problem:    pickAtom atoms.external_problems,    S.param('external_problem')
-    internal_obstacle:   pickAtom atoms.internal_obstacles,   S.param('internal_obstacle')
-    missed_opportunity:  pickAtom atoms.missed_opportunities, S.param('missed_opportunity')
-    primary_consequence: pickAtom atoms.primary_consequences, S.param('primary_consequence')
-    lens:                pickAtom atoms.lenses,               S.param('lens', 'mind_worm')
+readPriorChapterState = (chapterNumber) ->
+  return null unless chapterNumber > 1
+  filePath = path.join process.cwd(), 'out', 'chapters', "ch_#{chapterNumber - 1}", 'chapter_state.json'
+  return null unless fs.existsSync filePath
+  try JSON.parse fs.readFileSync(filePath, 'utf8') catch e then null
 
-  throw new Error "protagonist atom not found for id '#{S.param('protagonist')}'" unless picks.protagonist?
-  throw new Error "external_problem atom not found"   unless picks.external_problem?
-  throw new Error "internal_obstacle atom not found"  unless picks.internal_obstacle?
-  throw new Error "missed_opportunity atom not found" unless picks.missed_opportunity?
-  throw new Error "primary_consequence atom not found" unless picks.primary_consequence?
-  picks
+findAtomByLabel = (list, label) ->
+  return null unless label? and Array.isArray(list)
+  target = String(label).trim().toLowerCase()
+  for a in list
+    return a if a? and String(a.label ? '').trim().toLowerCase() is target
+  null
 
-buildPrompt = (picks) ->
-  # story_parts is deliberately NOT consumed here — it belongs to the
-  # legacy 5-beat diary flow. Feeding it in pollutes the spine with
-  # atmospheric details the model treats as required events.
-  { protagonist, antagonist, witness, external_problem, internal_obstacle,
-    missed_opportunity, primary_consequence, lens } = picks
+# Deterministic transform: outline entry + top-level cast/lens →
+# spine JSON with the shape downstream steps already consume.
+deriveSpineFromOutline = (outline, entry, priorState, lib) ->
+  atoms = lib?.story_atoms ? {}
+  cast =
+    protagonist: null
+    antagonist:  null
+    witness:     null
 
-  # Explicit name list so the model can't quietly drop non-protagonist cast.
-  castNames = [protagonist.label]
-  castNames.push antagonist.label if antagonist?
-  castNames.push witness.label if witness?
-  castLine = castNames.join(', ')
+  pAtom = findAtomByLabel atoms.characters, outline.cast?.protagonist_label
+  aAtom = findAtomByLabel atoms.characters, outline.cast?.antagonist_label
+  wAtom = findAtomByLabel atoms.characters, outline.cast?.witness_label
+  cast.protagonist = { id: pAtom.id, label: pAtom.label } if pAtom?
+  cast.antagonist  = { id: aAtom.id, label: aAtom.label } if aAtom?
+  cast.witness     = { id: wAtom.id, label: wAtom.label } if wAtom?
 
-  """
-You are the Story Spine Generator for the Writers Guild pipeline.
+  # Fallback: if label lookup missed, still name the character so
+  # downstream cast blocks work.
+  unless cast.protagonist?
+    lbl = outline.cast?.protagonist_label ? outline.protagonist
+    cast.protagonist = { id: null, label: String(lbl) } if lbl?
+  unless cast.antagonist?
+    lbl = outline.cast?.antagonist_label
+    cast.antagonist = { id: null, label: String(lbl) } if lbl? and String(lbl) isnt 'null'
+  unless cast.witness?
+    lbl = outline.cast?.witness_label
+    cast.witness = { id: null, label: String(lbl) } if lbl? and String(lbl) isnt 'null'
 
-Your purpose is NOT to write prose.
-Your purpose is NOT to plan scenes, decide who appears where, choose
-dialogue, or stage memories. Those are the responsibilities of later
-stages (Story Beats and Scene Planner).
+  lensAtom = findAtomByLabel atoms.lenses, outline.lens_label
+  lens =
+    if lensAtom? then { id: lensAtom.id, label: lensAtom.label }
+    else if outline.lens_label? then { id: null, label: String(outline.lens_label) }
+    else null
 
-Your purpose is to capture DRAMATIC NECESSITY only: the immutable story
-facts, the dramatic axis, and the questions that drive the chapter.
+  # Inherited state / questions come from priorState if we have it
+  # (chapter N > 1 and state_extractor archived a chapter_state.json).
+  # Otherwise use the outline's planned inherited fields.
+  inheritedState        = priorState?.actual_ending_state ? entry.inherited_state
+  inheritedQuestions    = priorState?.actual_questions_opened ? entry.inherited_questions ? []
+  inheritedObligations  = priorState?.actual_obligations_created ? entry.inherited_obligations ? []
 
-Think like a dramaturg locking in the story's obligations, not a
-director blocking a scene.
+  # Story protected_facts: story-scoped from outline, plus any facts
+  # the previous chapter created that are still in force.
+  storyFacts     = outline.story_protected_facts ? []
+  inheritedFacts = priorState?.actual_new_protected_facts ? []
+  protectedFacts = storyFacts.concat inheritedFacts
 
-Preserve the author's premise. Never invent a different story. Never
-improve it. Never solve it.
+  # Story questions for THIS chapter: inherited + this chapter's new.
+  storyQuestions = []
+  majorById = {}
+  for q in (outline.major_story_questions ? []) when q?.id?
+    majorById[q.id] = q
+  for qid in inheritedQuestions
+    q = majorById[qid]
+    storyQuestions.push { id: q.id, text: q.text } if q?
+  for q in (entry.new_questions ? []) when q?.id? and q?.text?
+    storyQuestions.push { id: q.id, text: q.text }
 
-ATOMS FOR THIS CHAPTER
----------------------------------------------------------------
-Protagonist:          #{formatAtom protagonist, 'character'}
-Antagonist:           #{formatAtom antagonist,  'character'}
-Witness:              #{formatAtom witness,     'character'}
-External problem:     #{formatAtom external_problem, 'external_problem'}
-Internal obstacle:    #{formatAtom internal_obstacle,'internal_obstacle'}
-Missed opportunity:   #{formatAtom missed_opportunity,  'missed_opportunity'}
-Primary consequence:  #{formatAtom primary_consequence,'primary_consequence'}
-Interpretive lens:    #{formatAtom lens,        'lens'}
-Lens interpretation:  #{lens?.interpretive_note ? '(none)'}
-
-FULL CAST FOR THIS CHAPTER: #{castLine}
-
-ABSTRACTION LEVEL — READ CAREFULLY
----------------------------------------------------------------
-The Story Spine describes WHAT MUST HAPPEN, not HOW it happens.
-
-WRONG (staging — belongs to Scene Planner):
-  "Southwick appears at the roadside."
-  "Tommy remembers his old girlfriend."
-  "Old girlfriend arrives in a red car."
-
-RIGHT (dramatic necessity — belongs here):
-  "A genuine opportunity to receive help appears."
-  "The internal obstacle grows stronger than the immediate need."
-  "The choice becomes unavoidable."
-  "The consequence becomes physical."
-
-The Story Spine must NEVER decide:
-  - which specific character embodies the opportunity
-  - where a character stands or how they arrive
-  - what anyone says or remembers
-  - weather, setting choreography, or sensory staging
-
-Those are Scene Planner decisions, downstream. The premise atoms are
-facts; the Story Spine only asserts that certain dramatic movements
-must occur.
-
-The protagonist's LABEL may be named in "story.protagonist" because it
-is a fact, not staging. Other cast members must NOT be assigned
-dramatic roles at this layer (Scene Planner picks who embodies which
-beat obligation).
-
-OUTPUT CONTRACT
----------------------------------------------------------------
-Return valid JSON only. No prose outside the JSON. No scenes. No
-causal chain. No blocking. Structure:
-
-{
-  "story": {
-    "title": "<short chapter title>",
-    "premise": "<one-sentence premise, abstract>",
-    "protagonist": "<protagonist label>",
-    "dramatic_axis": {
-      "external_problem":    "<echo the atom's canonical phrasing>",
-      "internal_obstacle":   "<echo>",
-      "missed_opportunity":  "<echo>",
-      "primary_consequence": "<echo>"
-    },
-    "starting_state": "<abstract dramatic state at chapter open>",
-    "terminal_state": "<abstract dramatic state at chapter close>",
-    "protected_facts":     [ "<3-6 immutable facts from the premise; no staging>" ],
-    "generation_freedoms": [ "<3-6 things later stages are free to invent>" ]
-  },
-  "questions": {
-    "story":             [ { "id": "q_<snake>", "text": "<question that pulls the plot forward>" } ],
-    "reader_curiosities":[ { "id": "q_<snake>", "text": "<secondary question the reader wonders about>" } ],
-    "symbolic":          [ { "id": "q_<snake>", "text": "<optional lens/symbolic question; may be empty>" } ]
-  }
-}
-
-RULES
-- Story questions are primary (must have at least one, at most three).
-  They pull the plot forward. Example: "Will the protagonist admit
-  they need help?"
-- Reader curiosities are secondary (0-3). Example: "Is the car
-  permanently broken?"
-- Symbolic questions are optional (0-2). Example: "What does the
-  hexagram mean?" Symbolic questions must NEVER drive the plot.
-- protected_facts contain ONLY premise facts (from the atoms above),
-  never staging. Good: "The protagonist's car has broken down." Bad:
-  "Southwick pulls up in a truck."
-- Every string in this artifact must describe dramatic necessity, not
-  staging. If a string names a specific action, location, or line of
-  dialogue, it is wrong for this layer.
-
-Return the JSON now.
-"""
+  spine =
+    story:
+      title:               entry.chapter_title ? outline.story_title
+      premise:             entry.chapter_purpose ? outline.premise
+      protagonist:         cast.protagonist?.label ? outline.protagonist
+      dramatic_axis:       entry.chapter_dramatic_axis ? {}
+      starting_state:      inheritedState
+      terminal_state:      entry.ending_state
+      protected_facts:     protectedFacts
+      generation_freedoms: []
+    questions:
+      story:              storyQuestions
+      reader_curiosities: []
+      symbolic:           []
+    cast:                 cast
+    lens:                 lens
+    _outline_ref:
+      chapter_id:           entry.chapter_id
+      chapter_number:       entry.chapter_number
+      next_chapter_trigger: entry.next_chapter_trigger
+    _prior_state_used:    priorState?
+  spine
 
 @step =
-  desc: "Convert story atoms into a deterministic story spine (JSON plan)"
+  desc: "Deterministic transform of story_outline_json[chapter_number-1] into spine"
 
   action: (S) ->
-    # story_parts is still declared in `needs:` (so it's guaranteed to
-    # exist when downstream stages want it), but the spine no longer
-    # embeds it into the prompt.
-    await S.need 'story_parts'
     lib = readAtomsLibrary()
     unless lib?.story_atoms?
-      throw new Error "atoms library missing story_atoms block at data/jim_story_library.yaml"
+      throw new Error "[story_spine] atoms library missing story_atoms block at data/jim_story_library.yaml"
 
-    picks = resolveAtoms S, lib
-    prompt = buildPrompt picks
+    outline = null
+    try outline = await S.need 'story_outline_json' catch e then outline = null
+    outline = coerceJSON outline if typeof outline is 'string'
 
-    modelDir = S.param 'quantized_model_dir', null
-    throw new Error "[story_spine] Missing quantized_model_dir param" unless modelDir?
+    unless outlineIsUsable outline
+      msg = if outline?.parse_error
+        "[story_spine] story_outline_json is a parse_error blob — fix the outline before running the chapter. Message: #{outline.message}"
+      else if not outline?.cast?.protagonist_label?
+        "[story_spine] story_outline_json missing cast.protagonist_label — outline schema is incomplete"
+      else if not Array.isArray(outline?.chapter_order) or not outline.chapter_order.length
+        "[story_spine] story_outline_json has no chapter_order entries"
+      else
+        "[story_spine] story_outline_json is not usable (shape check failed)"
+      throw new Error msg
 
-    # In-process node-mlx path (same as generate_diary_without_adapter_ite).
-    # Avoids the per-call Python cold-start of callMLX; the model stays
-    # loaded across calls.
-    llmArgs = op: 'generate', modelDir: modelDir, prompt: prompt
-    llmConfig = S.param('llm', null) ? S.param('mlx', null)
-    if llmConfig? and typeof llmConfig is 'object' and not Array.isArray(llmConfig)
-      for own key, value of llmConfig
-        continue unless value?
-        camel = switch key
-          when 'max-tokens', 'max_tokens' then 'maxTokens'
-          when 'temp', 'temperature' then 'temperature'
-          when 'top-p', 'top_p' then 'topP'
-          when 'system-prompt' then 'systemPrompt'
-          else key
-        llmArgs[camel] = value
+    ctx = null
+    try ctx = await S.need 'chapter_context' catch e then ctx = null
+    ctx = coerceJSON ctx if typeof ctx is 'string'
+    chapterNumber = parseChapterNumber(ctx?.chapter_number ? '1')
 
-    # Single-shot at temperature 0 — retrying the same prompt at temp=0
-    # is deterministic and would produce identical failures. If we ever
-    # move to temp > 0, wrap this in a small retry loop.
-    result = await S.callLLM llmArgs
-    raw = String(result?.rawText ? result?.text ? '')
-    spine = extractJSON raw
+    chapters = outline.chapter_order
+    unless chapterNumber >= 1 and chapterNumber <= chapters.length
+      throw new Error "[story_spine] chapter_number #{chapterNumber} out of range 1..#{chapters.length}"
+    entry = chapters[chapterNumber - 1]
 
-    unless shapeLooksOk(spine)
-      # Preserve raw for inspection instead of throwing so the artifact
-      # explains what the model actually produced.
-      spine =
-        parse_error: true
-        raw: raw
-        message: "story_spine could not extract a valid JSON shape (raise llm.maxTokens if the raw output ended mid-object)"
+    priorState = readPriorChapterState chapterNumber
 
-    # Inject the cast from the raw atom picks — deterministic, not
-    # LLM-dependent. Downstream stages MUST have the cast names
-    # available regardless of what the model chose to keep in the plan.
-    # The prompt builder will use these to bind voice + inject a
-    # mandatory "cast" section into the diary prompt.
-    castOf = (atom) ->
-      return null unless atom?
-      { id: atom.id, label: atom.label }
-    spine.cast =
-      protagonist: castOf picks.protagonist
-      antagonist:  castOf picks.antagonist
-      witness:     castOf picks.witness
-    spine.lens = castOf picks.lens
+    spine = deriveSpineFromOutline outline, entry, priorState, lib
+    console.log "[story_spine] outline-driven (ch=#{chapterNumber}, prior_state=#{if priorState? then 'yes' else 'no'})"
 
     S.make 'story_spine_json', spine
     S.done()

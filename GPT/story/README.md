@@ -2,7 +2,72 @@ Step memories for the `story` recipe — the four-layer chapter pipeline
 in `~/writer`. `writers-guild` is being retired; all future work
 happens here.
 
-## Four-layer planning (2026-08-01)
+## Five-layer planning + continuity (2026-08-01, e1–e4 landed)
+
+The full arc is now:
+
+```
+free-form description
+   ↓
+story_outline      whole-story arc + chapter_order[N chapters]         (e1)
+   ↓
+[per chapter — driven by chapter_number UI knob:]
+  story_spine       deterministic transform of outline entry            (e3)
+                    + inherited state from ch_<N-1>/chapter_state.json  (e4→e3 loop)
+     ↓
+  story_beats → scene_planner → build_diary_prompt_ite → generate_diary_*
+     ↓
+  state_extractor   compares generated chapter vs planned entry;         (e4)
+                    emits actual_ending_state / questions_opened /
+                    obligations_created / new_protected_facts +
+                    continuity_validation
+     ↓
+  archive_chapter   copies chapter artifacts (incl. chapter_state.json)  (e2)
+                    to out/chapters/ch_<N>/
+```
+
+### The continuity loop
+
+1. User writes the story description → `story_outline` produces
+   `chapter_order[]`.
+2. User sets `chapter_number: 1`, runs the pipeline.
+   `story_spine` reads the outline (no prior chapter), derives
+   chapter 1's spine. Beats/scenes/prose generate. State
+   extractor produces `chapter_state.json` with actual outcomes.
+   Archiver copies it into `out/chapters/ch_1/`.
+3. User sets `chapter_number: 2`, runs again. `story_spine`
+   reads outline entry 2 AND `out/chapters/ch_1/chapter_state.json`
+   — prefers `actual_ending_state` over the outline's planned
+   `inherited_state`. Chapters honor what actually happened, not
+   what was hoped.
+4. Repeat through the final chapter.
+
+### Report-only continuity validation
+
+`chapter_state_json.continuity_validation.status` is one of
+`matches | drift | conflict`. Report-only — the author reads it,
+decides whether to regenerate or accept the drift. Nothing
+auto-blocks the next chapter.
+
+### Backward compatibility
+
+If the outline is missing / `parse_error`, `story_spine` falls
+back to the pre-e3 atom-picker + LLM path. If the outline is
+present but `state_extractor` fails, the next chapter's spine
+falls back to the outline's planned `inherited_state`. Each layer
+degrades gracefully.
+
+See `story/story_outline.md`, `story/story_spine.md`,
+`story/state_extractor.md`, `story/archive_chapter.md`,
+`story/chapter_context.md`,
+`story/collect_diary_kag_ite.md`.
+
+**Also read `story/runner_gotchas.md`** — captures the
+`[never]`-gate pruning, `process.cwd()` unreliability, and the
+`depends_on` scheduling semantics learned the hard way while
+landing e4.
+
+## Four-layer chapter planning
 
 The pipeline separates dramatic obligation from dramatic staging:
 

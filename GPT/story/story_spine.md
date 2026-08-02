@@ -163,6 +163,46 @@ force serialization naturally.
 Rule for future MLX steps: **any two steps that `S.callLLM` on the
 same `modelDir` MUST have an explicit `depends_on` edge.**
 
+## Two intake paths (Increment e3)
+
+As of e3, `story_spine` has TWO ways to run:
+
+### 1. Outline-driven (deterministic, NO LLM call)
+
+When `story_outline_json` is present and shape-ok, the spine is
+derived deterministically from the outline:
+
+- `chapter_number` UI param selects `chapter_order[N-1]`
+- Cast + lens come from the outline's story-scoped `cast` +
+  `lens_label` (character labels resolved to atom `id/label` pairs
+  via the atoms library)
+- `dramatic_axis` = entry's `chapter_dramatic_axis`
+- `starting_state` = previous chapter's `actual_ending_state` if
+  `out/chapters/ch_<N-1>/chapter_state.json` exists (e4);
+  otherwise the outline entry's planned `inherited_state`
+- `terminal_state` = entry's `ending_state`
+- `protected_facts` = outline's `story_protected_facts` +
+  previous chapter's `actual_new_protected_facts` (e4)
+- `questions.story` = expanded inherited question IDs + this
+  chapter's `new_questions`
+- `_outline_ref` block stamps `chapter_id`, `chapter_number`,
+  `next_chapter_trigger` for provenance
+
+This path skips the LLM entirely — the outline already carries
+dramatic necessity at the right abstraction, so the spine becomes
+a pure data transform. Saves ~68s per run.
+
+### 2. Legacy LLM path (fallback)
+
+When `story_outline_json` is missing / `parse_error` / lacks
+required fields, `story_spine` falls back to the pre-e3 behavior:
+resolve atom UI picks, call the LLM with the dramaturg prompt,
+parse the JSON, inject cast/lens from picks. Kept so the pipeline
+still runs before the user has written an outline.
+
+Which path fired is visible in the log: `[story_spine]
+outline-driven (ch=N, prior_state=yes|no)` vs no such line.
+
 ## What consumes this (Increment d, revised)
 
 Only `story.protected_facts` is folded into the generator's prompt

@@ -196,40 +196,26 @@ readArtifactTarget = (L, artifactKey) ->
   desc: "Build the final diary prompt from diary events and matched KAG"
 
   action: (L) ->
-    storyParts = await L.need 'story_parts'
+    # e7 (2026-08-02): story_parts is no longer read here — the legacy
+    # 5-beat subgraph (select_story_recipe + resolve_story_parts) was
+    # deleted from the recipe. Only KAG (which now derives its emotions
+    # from beats) and the four planning artifacts remain as inputs.
     diaryKag = await L.need 'diary_kag'
     storySpine = await L.need 'story_spine_json'
     storyBeats = await L.need 'story_beats_json'
     scenePlan = await L.need 'scene_plan_json'
-    storyParts = coerceJSON storyParts
     diaryKag = normalizeDiaryKag diaryKag
     storySpine = coerceJSON storySpine
     storyBeats = coerceJSON storyBeats
     scenePlan = coerceJSON scenePlan
 
-    unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
-      storyParts = await readArtifactTarget L, 'story_parts'
-      storyParts = coerceJSON storyParts
-
     unless Array.isArray(diaryKag?.entries)
       diaryKag = await readArtifactTarget L, 'diary_kag'
       diaryKag = normalizeDiaryKag diaryKag
 
-    throw new Error "[#{L.stepName}] story_parts must be an object" unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
     throw new Error "[#{L.stepName}] diary_kag must be an object" unless Array.isArray(diaryKag?.entries)
 
-    eventLines = []
-    eventLines.push renderEvent kind:'scene', text: storyParts.scene?.text, keyword: storyParts.scene?.location, headline: ''
-    eventLines.push renderEvent kind:'arrival', text: storyParts.arrival?.text, keyword: storyParts.arrival?.character, headline: ''
-    eventLines.push renderEvent kind:'disturbance', text: storyParts.disturbance?.text, keyword: storyParts.disturbance?.theme, headline: ''
-    eventLines.push renderEvent kind:'reflection', text: storyParts.reflection?.text, keyword: '', headline: ''
-    eventLines.push renderEvent kind:'realization', text: storyParts.realization?.text, keyword: '', headline: ''
-    eventLines = eventLines.filter(Boolean)
     kagLines = (renderKagEntry(entry) for entry in diaryKag.entries when entry?).filter(Boolean)
-    supportLines = []
-    for kind in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
-      row = renderEventSupport kind, diaryKag?.events?[kind]
-      supportLines.push row if row?
 
     # Fold the actual matched CHUNKS (Jim's own words) in per event. Toggle with
     # include_chunk_passages (default on); chunk_excerpt_chars caps each passage
