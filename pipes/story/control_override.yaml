@@ -1,11 +1,15 @@
-pipeline: story
+pipeline: spystory
 story_outline:
-  story_description: "Tomorrow is thanksgiving.\_\_That makes today is like Mardi-Gras for a miser.\_ Tomorrow the miser must be “thankful” and oh, so giving. \_Last opportunity to be stingy.\n\nHey, {{{First Name}}}, honestly, I’m struggling hard with what I got.\_ I work when I can, and it’s damned good money, but times are tough, contract offers are pro bono, no pay, equity only, projects that just cant work.\n\nHonest: One says: \"My site's been hacked.\" \_I say \"Yes, I found the hack, fixed it. \_You need to clean the site up. It's got holes everywhere.\" \_-- He says: \"We can't do that, the site might go down\" \_-- I reply: \"Yes, of course, sir, my mission in life is to Ransack your Roman Empire. \_You have found me out.\"\n\nWorse than worst.\_ I gotta be very careful with every penny, and I just lost my cell phone (I hate that, I have to learn a new crappy cellphone interface), and something ALWAYS pops up!\n\nSo today, buddy, I’m keeping it all.\_ I’ve got some schemes to keep my cash flow to the bare minimum and if they don’t work,\_ well, I’ll just think of something new. \_**_Excuse me_**, {{{First Name}}}, as I spend my money on me, or nothing!\n\nBut, even as I write the previous paragraph, realizing it’s truth and yes, it is true, I notice that I’m kicking away feelings, connections, hope, what a waste of wisdom for a truth. \_Never sacrifice wisdom for the merely true.\n\nThe wisdom of the bigger picture is this: \__I have castles yet to build!_\_ The real source of value is the sea of human energy.\_ And fishing in that sea means fishing in a sea of feelings, connections and hope.\_ Best not to kick over those cups.\_ It doesn’t change my economic situation at all, just how I think about it.\n\nGetting those cups to work is not a once a year thing.\_ Maybe Thanksgiving isn’t just the day after Miser’s Day… \_ But it’s a start.\n\nToday is is not tomorrow, it's Miser’s Day.\_ Pretend you are a miser for a moment: think about what things you hold too tightly and what that might mean for you. \_Just for today.\n\nToday’s story is based on the destination [5 of Cups][0] (wasted emotions, regret, disconnect )\n\nand the motifs: [4 of Pentacles][1] and [7 of wands][2]: the miser guarding with dreams and schemes.\n\nHey, This one was too easy, and too obvious.\_ It wasn’t me, I drew the three cards fair and square.\_ The Tarot made me do it.\_\n\nHappy Miser’s Day!\n\n"
+  story_description: >+
+    The king of poodepoo calls the good guy in to help with a secret mission.  The good guy must take a large sum of
+    money to the king's nephew.  On the way, the good guy meets the bad guy and the bad guy steals the money.  The good
+    guy chases the bad guy and fights him and gets the money back and can give the money to the king's nephew
+
 generate_diary_with_adapter_ite:
   adapter_path: build/adapter/0000285_adapters.safetensors
 collect_diary_kag_ite:
   scene_emotion: contentment
-  arrival_emotion: contentment
-  disturbance_emotion: frustration
-  reflection_emotion: contentment
+  arrival_emotion: anxiety
+  disturbance_emotion: anger
+  reflection_emotion: anger
   realization_emotion: joy

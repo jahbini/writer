@@ -1,5 +1,6 @@
 fs   = require 'fs'
 path = require 'path'
+yaml = require 'js-yaml'
 
 # ─── Story Beats step ─────────────────────────────────────────────────
 # Reads story_spine_json (dramatic necessity: axis + facts + questions)
@@ -9,11 +10,46 @@ path = require 'path'
 # Beats never stage. They never name specific characters, locations,
 # dialogue, weather, memory contents. That is Scene Planner's job.
 #
-# Tommy backbone target:
-#   1. Breakdown creates dependence
-#   2. Opportunity to receive help appears
-#   3. Pride defeats need
-#   4. Consequence becomes physical
+# Dramatic vocabulary (function enum, RIGHT/WRONG abstraction examples,
+# BACKBONE TARGET block) is externalized into data/dramatic_grammars.yaml.
+# Selector: `grammar:` in override/<recipe>.yaml (default: jim_tragedy,
+# which is a field-for-field transcription of the old hardcoded behavior).
+
+lepa = require path.join(__dirname, 'lepa.coffee')
+
+readGrammar = (name) ->
+  libPath = path.join process.cwd(), 'data', 'dramatic_grammars.yaml'
+  doc = yaml.load fs.readFileSync(libPath, 'utf8')
+  grammar = doc?.grammars?[name]
+  unless grammar?
+    throw new Error "[story_beats] grammar '#{name}' not found in #{libPath} (available: #{Object.keys(doc?.grammars ? {}).join(', ') or '(none)'})"
+  grammar
+
+# Phase 2: render the "Movement vocabulary" block from the grammar's
+# stressed energies × their 10 minor-arcana entries. Returns '' when
+# the vocabulary is disabled — buildPrompt then produces byte-identical
+# output to the pre-vocabulary baseline.
+buildBeatVocabularyBlock = (grammar, arcana) ->
+  ALL_ENERGIES = ['logos','ethos','pathos','anima']
+  energies = grammar?.energies ? ALL_ENERGIES
+  minors   = arcana?.minor_arcana ? {}
+  parts = []
+  parts.push "MOVEMENT VOCABULARY"
+  parts.push "---------------------------------------------------------------"
+  parts.push "Beats SHOULD echo the movements below when they fit — this is"
+  parts.push "the vocabulary of dramatic motion the selected grammar stresses."
+  parts.push "NEVER output card names, suits, or ranks. Use only the"
+  parts.push "public_name and movement language."
+  parts.push ""
+  for energy in energies
+    entries = minors[energy] ? []
+    parts.push "  [#{energy}]"
+    for e in entries
+      pn = String(e?.public_name ? '').trim()
+      mv = String(e?.movement ? '').trim()
+      parts.push "    #{pn}: #{mv}"
+    parts.push ""
+  parts.join('\n').replace(/\n+$/, '')
 
 stripMlxFraming = (text) ->
   return '' unless typeof text is 'string'
@@ -84,7 +120,7 @@ shapeLooksOk = (beats) ->
     return false unless b?.required_end_state?
   true
 
-buildPrompt = (spine) ->
+buildPrompt = (spine, grammar, vocabBlock = '') ->
   story = spine?.story ? {}
   axis = story.dramatic_axis ? {}
   questions = spine?.questions ? {}
@@ -93,6 +129,13 @@ buildPrompt = (spine) ->
   symQs = (q.text for q in (questions.symbolic ? []) when q?.text?).join('\n  - ')
   protectedFacts = (spine?.story?.protected_facts ? []).map((f) -> "  - #{f}").join('\n')
   freedoms = (spine?.story?.generation_freedoms ? []).map((f) -> "  - #{f}").join('\n')
+
+  fnEnum = Object.keys(grammar.dramatic_functions).join(' | ')
+  wrongLines = ("  \"#{ex}\"" for ex in (grammar.abstraction_examples?.wrong ? [])).join('\n')
+  rightLines = ("  \"#{ex}\"" for ex in (grammar.abstraction_examples?.right ? [])).join('\n')
+  [beatLo, beatHi] = grammar.beat_count
+  bb = grammar.backbone
+  backboneBeatLines = ("  #{i+1}. #{b.gloss}" for b, i in (bb?.beats ? [])).join('\n')
 
   """
 You are the Story Beats Generator for the Writers Guild pipeline.
@@ -143,15 +186,10 @@ ABSTRACTION LEVEL — READ CAREFULLY
 Beats describe DRAMATIC MOVEMENT, not staging.
 
 WRONG (staging — belongs to Scene Planner):
-  "Southwick pulls up in a truck."
-  "Tommy remembers his old girlfriend."
-  "Old girlfriend arrives; Tommy looks away."
+#{wrongLines}
 
 RIGHT (dramatic movement — belongs here):
-  "A genuine opportunity to receive help appears."
-  "The internal obstacle grows stronger than the immediate need."
-  "The choice becomes unavoidable."
-  "The consequence becomes physical."
+#{rightLines}
 
 Beats must NEVER:
   - name a specific character (protagonist label is fine when
@@ -178,17 +216,13 @@ Scene Planner later decides how that tension is dramatized.
 
 BACKBONE TARGET
 ---------------------------------------------------------------
-For a Tommy-shaped premise (breakdown / not-deserving-help /
-opportunity-passes / walking-home) the ideal beats look like:
+#{bb.note}
 
-  1. Breakdown creates dependence.
-  2. Opportunity to receive help appears.
-  3. Pride defeats need.
-  4. Consequence becomes physical.
+#{backboneBeatLines}
 
-Aim for that level of abstraction, that number of beats (3–5), and
+Aim for that level of abstraction, that number of beats (#{beatLo}–#{beatHi}), and
 that cadence of movement.
-
+#{if vocabBlock and vocabBlock.length then "\n" + vocabBlock + "\n" else ""}
 OUTPUT CONTRACT
 ---------------------------------------------------------------
 Return valid JSON only. No prose outside the JSON. Structure:
@@ -198,7 +232,7 @@ Return valid JSON only. No prose outside the JSON. Structure:
     {
       "id": "b1",
       "purpose": "<one-line role of this beat in the arc>",
-      "dramatic_function": "<one of: establish_need | introduce_opportunity | escalate_pressure | force_a_decision | reveal_information | lose_an_opportunity | make_consequence_physical | resolve_a_question>",
+      "dramatic_function": "<one of: #{fnEnum}>",
       "required_transition": "<how the story state must shift during this beat, abstract>",
       "required_end_state": "<the abstract state that must be true when this beat ends>",
       "conflict": {
@@ -233,6 +267,10 @@ RULES
 Return the JSON now.
 """
 
+@buildPrompt              = buildPrompt
+@readGrammar              = readGrammar
+@buildBeatVocabularyBlock = buildBeatVocabularyBlock
+
 @step =
   desc: "Convert story_spine_json into ordered abstract Story Beats (JSON only)"
 
@@ -242,7 +280,18 @@ Return the JSON now.
     if spine?.parse_error
       throw new Error "[story_beats] upstream story_spine returned parse_error; cannot plan beats"
 
-    prompt = buildPrompt spine
+    grammar = readGrammar S.param('grammar', 'jim_tragedy')
+
+    # Phase 2 (LEPA): optional beat vocabulary from minor arcana.
+    # Default absent/false → vocab block is empty → prompt is
+    # byte-identical to the pre-Phase-2 baseline. See
+    # GPT/story/lepa_integration.md.
+    vocabBlock = ''
+    if S.param 'beat_vocabulary', false
+      arcana = lepa.loadArcana()
+      vocabBlock = buildBeatVocabularyBlock grammar, arcana
+
+    prompt = buildPrompt spine, grammar, vocabBlock
 
     modelDir = S.param 'quantized_model_dir', null
     throw new Error "[story_beats] Missing quantized_model_dir param" unless modelDir?

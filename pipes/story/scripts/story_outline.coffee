@@ -13,6 +13,8 @@ yaml = require 'js-yaml'
 # (e3) will rewire story_spine to pick chapter_order[chapter_number-1]
 # as its dramatic necessity, replacing the raw atom-picking flow.
 
+lepa = require path.join(__dirname, 'lepa.coffee')
+
 readAtomsLibrary = ->
   libPath = path.join process.cwd(), 'data', 'jim_story_library.yaml'
   yaml.load fs.readFileSync(libPath, 'utf8')
@@ -84,6 +86,12 @@ shapeLooksOk = (outline) ->
   return false unless outline.cast? and typeof outline.cast is 'object'
   return false unless outline.cast.protagonist_label?
   return false unless outline.lens_label?
+  # unresolved_cast is OPTIONAL — absent = valid (old outlines pass).
+  # If present, each entry must be {name, archetype, dramatic_relation}.
+  if outline.unresolved_cast?
+    return false unless Array.isArray outline.unresolved_cast
+    for u in outline.unresolved_cast
+      return false unless u?.name? and u?.archetype? and u?.dramatic_relation?
   # Single-chapter outlines are legal — many of Jim's short stories are
   # one-piece pieces with a turn (e.g. "Day of the Miser"). Only require
   # at least one chapter.
@@ -110,13 +118,23 @@ summarizeAtomList = (list, limit = 10) ->
     "    - #{label} (id: #{id})"
   entries.join('\n')
 
-buildPrompt = (description, atoms) ->
+renderArchetypeEnum = (archetypes) ->
+  return '(none)' unless archetypes? and typeof archetypes is 'object'
+  lines = []
+  for own key, spec of archetypes
+    examples = (spec?.examples ? []).slice(0, 4).join(', ')
+    lines.push "  - #{key}: #{examples}"
+  lines.join('\n')
+
+buildPrompt = (description, atoms, archetypes) ->
   characters      = summarizeAtomList atoms?.characters
   externals       = summarizeAtomList atoms?.external_problems
   internals       = summarizeAtomList atoms?.internal_obstacles
   missed          = summarizeAtomList atoms?.missed_opportunities
   consequences    = summarizeAtomList atoms?.primary_consequences
   lenses          = summarizeAtomList atoms?.lenses
+  archetypeEnum   = renderArchetypeEnum archetypes
+  archetypeKeys   = if archetypes? then Object.keys(archetypes).join(' | ') else ''
 
   """
 You are the Story Outline Generator for the Writers Guild pipeline.
@@ -151,6 +169,11 @@ Primary consequences:
 
 Interpretive lenses:
 #{lenses}
+
+CHARACTER ARCHETYPES (closed enum for description-named cast that
+have no library atom above — see UNRESOLVED_CAST rule below)
+---------------------------------------------------------------
+#{archetypeEnum}
 
 RULES
 ---------------------------------------------------------------
@@ -226,6 +249,7 @@ Return valid JSON only. No prose outside the JSON. Structure:
 
   "major_story_questions":     [ { "id": "q_<snake>", "text": "<question>" } ],
   "major_story_obligations":   [ { "id": "o_<snake>", "text": "<promise, debt, or arc the story must land>" } ],
+  "unresolved_cast":           [ { "name": "<name as it appears in the description>", "archetype": "<one of: #{archetypeKeys}>", "dramatic_relation": "<one line: how they act on the protagonist / plot>" } ],
   "chapter_order": [
     {
       "chapter_id":             "ch_1",
@@ -271,6 +295,22 @@ CAST + LENS RULES
   "the four forces"), use that as lens_label — do NOT pick a
   different lens.
 
+UNRESOLVED_CAST RULES
+- The four cast label fields (protagonist_label, antagonist_label,
+  witness_label, and lens_label) still require exact atom-library
+  labels. That rule is unchanged.
+- A description-named character that has NO library atom (e.g. "the
+  King of Poodepoo", "the king's nephew", "the man from turkey-stan")
+  is NOT dropped and NOT invented into an atom slot. It goes into the
+  `unresolved_cast` array instead, with an `archetype` chosen from
+  the closed enum above (one of: #{archetypeKeys}) and a one-line
+  `dramatic_relation` describing how they act on the protagonist or
+  the plot.
+- `unresolved_cast` is OPTIONAL. If the description names no such
+  extra characters, omit the field entirely (do NOT emit []).
+- Do NOT put atom-library characters in `unresolved_cast`. It is only
+  for the description-named characters the library has no atom for.
+
 CHAPTER_DRAMATIC_AXIS RULES
 - Every chapter has its OWN axis — the whole-arc axis changes
   shape across chapters. Chapter 1 might introduce the external
@@ -283,6 +323,8 @@ CHAPTER_DRAMATIC_AXIS RULES
 Return the JSON now.
 """
 
+@buildPrompt = buildPrompt
+
 @step =
   desc: "Convert a free-form story description into a structured whole-story outline"
 
@@ -292,8 +334,10 @@ Return the JSON now.
 
     lib = readAtomsLibrary()
     atoms = lib?.story_atoms ? {}
+    fw = lepa.loadFramework()
+    archetypes = fw?.character_archetypes ? {}
 
-    prompt = buildPrompt description, atoms
+    prompt = buildPrompt description, atoms, archetypes
 
     modelDir = S.param 'quantized_model_dir', null
     throw new Error "[story_outline] Missing quantized_model_dir param" unless modelDir?

@@ -24,25 +24,36 @@
 ###
 
 # ── Dramatic_function → KAG keyword mapping ──────────────────────
-# Only uses the 12 keywords actually present in the corpus:
+# Sourced from data/dramatic_grammars.yaml — dramatic_functions.<fn>.kag_emotion.
+# Selector: `grammar:` param in override/<recipe>.yaml (default: jim_tragedy).
+# kag_emotion values MUST be one of the 12 corpus keywords:
 #   anger, anxiety, contentment, disgust, fear, frustration,
 #   grief, joy, neutral, sadness, shame, surprise
-BEAT_EMOTION =
-  establish_need:            'frustration'   # need unmet, tension present
-  introduce_opportunity:     'surprise'      # something new enters
-  escalate_pressure:         'anxiety'       # tension climbs
-  force_a_decision:          'fear'          # stakes clarify
-  reveal_information:        'surprise'      # something clicks
-  lose_an_opportunity:       'sadness'       # missed / passed
-  make_consequence_physical: 'shame'         # cost lands in the body
-  resolve_a_question:        'contentment'   # question closes
+fs   = require 'fs'
+path = require 'path'
+yaml = require 'js-yaml'
 
 DEFAULT_EMOTION = 'neutral'
 
-emotionForBeat = (beat) ->
+readGrammar = (name) ->
+  libPath = path.join process.cwd(), 'data', 'dramatic_grammars.yaml'
+  doc = yaml.load fs.readFileSync(libPath, 'utf8')
+  grammar = doc?.grammars?[name]
+  unless grammar?
+    throw new Error "[collect_diary_kag_ite] grammar '#{name}' not found in #{libPath} (available: #{Object.keys(doc?.grammars ? {}).join(', ') or '(none)'})"
+  grammar
+
+buildBeatEmotionMap = (grammar) ->
+  m = {}
+  for own fn, spec of (grammar?.dramatic_functions ? {})
+    emo = String(spec?.kag_emotion ? '').trim()
+    m[fn] = emo if emo.length
+  m
+
+emotionForBeat = (beat, beatEmotionMap) ->
   return null unless beat?
   fn = String(beat.dramatic_function ? '').trim()
-  BEAT_EMOTION[fn] ? DEFAULT_EMOTION
+  beatEmotionMap[fn] ? DEFAULT_EMOTION
 
 coerceJSON = (value) ->
   return value unless typeof value is 'string'
@@ -151,7 +162,7 @@ flattenEntries = (eventMap) ->
 # override wins if the user set a non-empty param.
 KINDS = ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
 
-derivePerKindEmotions = (L, beatsDoc) ->
+derivePerKindEmotions = (L, beatsDoc, beatEmotionMap) ->
   beats = beatsDoc?.beats ? []
   emotions = {}
   provenance = {}
@@ -160,7 +171,7 @@ derivePerKindEmotions = (L, beatsDoc) ->
   lastEmotion = DEFAULT_EMOTION
   for kind, i in KINDS
     beat = beats[i] ? beats[beats.length - 1]  # reuse last beat if we ran out
-    derived = emotionForBeat(beat) ? lastEmotion
+    derived = emotionForBeat(beat, beatEmotionMap) ? lastEmotion
     lastEmotion = derived
     emotions[kind] = derived
     provenance[kind] =
@@ -175,6 +186,9 @@ derivePerKindEmotions = (L, beatsDoc) ->
       provenance[kind].source = 'ui_override'
 
   { emotions, provenance }
+
+@readGrammar = readGrammar
+@buildBeatEmotionMap = buildBeatEmotionMap
 
 @step =
   desc: "Collect KAG chunk matches, driven by story_beats dramatic_functions (UI params override)"
@@ -191,7 +205,10 @@ derivePerKindEmotions = (L, beatsDoc) ->
     limit = Number limitRaw
     throw new Error "[#{L.stepName}] per_event_match_limit must be a positive integer" unless Number.isFinite(limit) and limit > 0 and Math.floor(limit) is limit
 
-    { emotions, provenance } = derivePerKindEmotions L, beatsDoc
+    grammar = readGrammar L.param('grammar', 'jim_tragedy')
+    beatEmotionMap = buildBeatEmotionMap grammar
+
+    { emotions, provenance } = derivePerKindEmotions L, beatsDoc, beatEmotionMap
 
     eventMap = {}
     usedStoryIDs = new Set()

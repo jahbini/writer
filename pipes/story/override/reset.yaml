@@ -1,0 +1,4 @@
+pipeline: reset
+artifacts:
+  stories_md:
+    source: data/jim.md

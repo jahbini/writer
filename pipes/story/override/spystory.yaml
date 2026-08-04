@@ -1,0 +1,16 @@
+pipeline: spystory
+
+# ── Phase 1 LEPA: cast_genesis + cast_supplement (mirror of story) ─
+artifacts:
+  cast_supplement:
+    target: out/cast_supplement.json
+
+cast_genesis:
+  run: cast_genesis.coffee
+  depends_on: [story_outline]
+  needs: [story_outline_json]
+  makes: [cast_supplement]
+
+story_spine:
+  depends_on: [story_outline, chapter_context, cast_genesis]
+  needs: [story_outline_json, chapter_context, cast_supplement]

@@ -45,9 +45,38 @@ findAtomByLabel = (list, label) ->
     return a if a? and String(a.label ? '').trim().toLowerCase() is target
   null
 
+# Merge cast_supplement sheets into the spine as LABEL-ONLY entries
+# under spine.cast.supplemental. LEAKAGE LAW: archetype / court_role
+# / primary_energy / distortion / typical_imbalance stay in the
+# cast_supplement artifact and are DROPPED before entering the spine
+# — nothing downstream needs those fields, and build_diary_prompt's
+# prompt must never carry them.
+mergeSupplementalCast = (outline, supplementDoc) ->
+  sheets = supplementDoc?.sheets ? []
+  # An unresolved character whose name exactly fills one of the
+  # outline's atom-only cast slots (antagonist_label / witness_label)
+  # goes IN THAT SLOT instead of into supplemental[]. In practice the
+  # outline generator will not label an unresolved character into a
+  # slot (see the UNRESOLVED_CAST rule), so this branch is defensive:
+  # slot assignment only happens when the outline explicitly requests it.
+  slotFor = (name) ->
+    return 'antagonist' if outline?.cast?.antagonist_label? and outline.cast.antagonist_label is name
+    return 'witness'    if outline?.cast?.witness_label?    and outline.cast.witness_label    is name
+    null
+  supplemental = []
+  slotAssignments = {}
+  for s in sheets
+    entry = { id: s.id, label: s.label }
+    slot = slotFor s.label
+    if slot?
+      slotAssignments[slot] = entry
+    else
+      supplemental.push entry
+  { supplemental, slotAssignments }
+
 # Deterministic transform: outline entry + top-level cast/lens →
 # spine JSON with the shape downstream steps already consume.
-deriveSpineFromOutline = (outline, entry, priorState, lib) ->
+deriveSpineFromOutline = (outline, entry, priorState, lib, supplementDoc) ->
   atoms = lib?.story_atoms ? {}
   cast =
     protagonist: null
@@ -72,6 +101,14 @@ deriveSpineFromOutline = (outline, entry, priorState, lib) ->
   unless cast.witness?
     lbl = outline.cast?.witness_label
     cast.witness = { id: null, label: String(lbl) } if lbl? and String(lbl) isnt 'null'
+
+  # Merge in genesis characters from cast_supplement (Phase 1 LEPA).
+  # Only labels cross the leakage boundary; full sheets stay in the
+  # cast_supplement artifact.
+  { supplemental, slotAssignments } = mergeSupplementalCast outline, supplementDoc
+  cast.antagonist = slotAssignments.antagonist if slotAssignments.antagonist? and not cast.antagonist?
+  cast.witness    = slotAssignments.witness    if slotAssignments.witness?    and not cast.witness?
+  cast.supplemental = supplemental if supplemental.length
 
   lensAtom = findAtomByLabel atoms.lenses, outline.lens_label
   lens =
@@ -126,6 +163,8 @@ deriveSpineFromOutline = (outline, entry, priorState, lib) ->
     _prior_state_used:    priorState?
   spine
 
+@deriveSpineFromOutline = deriveSpineFromOutline
+
 @step =
   desc: "Deterministic transform of story_outline_json[chapter_number-1] into spine"
 
@@ -161,8 +200,13 @@ deriveSpineFromOutline = (outline, entry, priorState, lib) ->
 
     priorState = readPriorChapterState chapterNumber
 
-    spine = deriveSpineFromOutline outline, entry, priorState, lib
-    console.log "[story_spine] outline-driven (ch=#{chapterNumber}, prior_state=#{if priorState? then 'yes' else 'no'})"
+    supplementDoc = null
+    try supplementDoc = await S.need 'cast_supplement' catch e then supplementDoc = null
+    supplementDoc = coerceJSON supplementDoc
+
+    spine = deriveSpineFromOutline outline, entry, priorState, lib, supplementDoc
+    supN = (supplementDoc?.sheets ? []).length
+    console.log "[story_spine] outline-driven (ch=#{chapterNumber}, prior_state=#{if priorState? then 'yes' else 'no'}, supplemental=#{supN})"
 
     S.make 'story_spine_json', spine
     S.done()

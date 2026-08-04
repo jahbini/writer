@@ -1,5 +1,31 @@
 pipeline: story
 
+# ── Phase 1 LEPA: cast_genesis + cast_supplement ───────────────────
+# The recipe (config/story.yaml) is not edited for tuning; a new step
+# and its produced artifact are registered here (deep-merged into the
+# experiment). See GPT/story/lepa_integration.md.
+artifacts:
+  cast_supplement:
+    target: out/cast_supplement.json
+
+cast_genesis:
+  run: cast_genesis.coffee
+  depends_on: [story_outline]
+  needs: [story_outline_json]
+  makes: [cast_supplement]
+
+story_spine:
+  # story_spine now reads cast_supplement to fold genesis characters
+  # into spine.cast (label-only) — see LEAKAGE LAW.
+  depends_on: [story_outline, chapter_context, cast_genesis]
+  needs: [story_outline_json, chapter_context, cast_supplement]
+
+story_beats:
+  grammar: jim_tragedy
+
+collect_diary_kag_ite:
+  grammar: jim_tragedy
+
 generate_diary_with_adapter_ite:
   depends_on:
     - build_diary_prompt_ite

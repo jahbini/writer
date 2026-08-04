@@ -94,6 +94,12 @@ castNamesList = (cast) ->
   names.push cast.protagonist.label if cast?.protagonist?.label?
   names.push cast.antagonist.label  if cast?.antagonist?.label?
   names.push cast.witness.label     if cast?.witness?.label?
+  # Genesis characters (from cast_supplement, merged by story_spine).
+  # Only labels are carried — see LEAKAGE LAW in
+  # GPT/story/lepa_integration.md.
+  if Array.isArray(cast?.supplemental)
+    for e in cast.supplemental when e?.label?
+      names.push e.label
   names
 
 formatBeatForPrompt = (b, i) ->
@@ -146,6 +152,7 @@ CAST (the ONLY named characters you may use)
 Protagonist: #{cast.protagonist?.label ? '(none)'}
 Antagonist:  #{cast.antagonist?.label  ? '(none — omit if none)'}
 Witness:     #{cast.witness?.label     ? '(none — omit if none)'}
+#{if Array.isArray(cast.supplemental) and cast.supplemental.length then "Also present: " + (e.label for e in cast.supplemental when e?.label?).join(', ') else ""}
 
 Cast list: #{castLine}
 
@@ -203,6 +210,9 @@ Return valid JSON only. No prose outside the JSON. Structure:
 
 Return the JSON now.
 """
+
+@buildPrompt    = buildPrompt
+@castNamesList  = castNamesList
 
 @step =
   desc: "Convert story_beats_json into concrete Scene Candidates and select one per beat"
