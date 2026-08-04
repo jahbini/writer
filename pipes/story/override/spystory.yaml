@@ -14,3 +14,19 @@ cast_genesis:
 story_spine:
   depends_on: [story_outline, chapter_context, cast_genesis]
   needs: [story_outline_json, chapter_context, cast_supplement]
+
+# ── Model swap ────────────────────────────────────────────────────
+# Human drives model prep — do NOT auto-run download/reset. The
+# build/model{,4} artifacts prepared from the stock Qwen id must be
+# re-prepared for this repo before spystory generation will work
+# (see GPT/story/spystory.md).
+run:
+  model: huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated
+
+# ── state_extractor budget ────────────────────────────────────────
+# Doubled from the effective 3000 → 6000. Last run showed
+# `drift_notes: ["state_extractor parse_error"]` with truncated JSON;
+# headroom is the first thing to give it.
+state_extractor:
+  llm:
+    maxTokens: 6000

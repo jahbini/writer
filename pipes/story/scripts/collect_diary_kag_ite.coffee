@@ -179,16 +179,25 @@ derivePerKindEmotions = (L, beatsDoc, beatEmotionMap) ->
       dramatic_function: beat?.dramatic_function ? null
 
   # UI param OVERRIDES if non-empty.
+  # 'default' (any case, trimmed) is the sentinel meaning "no override
+  # — grammar decides". The UI's blank option renders as "(default)"
+  # with value="" today, so the empty branch already covers the common
+  # case; treating the literal string as sentinel makes the semantic
+  # explicit and future-proofs against UIs that send the label as the
+  # value. See GPT/story/spystory.md for the crash trace.
   for kind in KINDS
     override = String(L.param("#{kind}_emotion", '') ? '').trim()
-    if override.length
-      emotions[kind] = override
-      provenance[kind].source = 'ui_override'
+    continue unless override.length
+    continue if override.toLowerCase() is 'default'
+    emotions[kind] = override
+    provenance[kind].source = 'ui_override'
 
   { emotions, provenance }
 
-@readGrammar = readGrammar
-@buildBeatEmotionMap = buildBeatEmotionMap
+@readGrammar             = readGrammar
+@buildBeatEmotionMap     = buildBeatEmotionMap
+@derivePerKindEmotions   = derivePerKindEmotions
+@KINDS                   = KINDS
 
 @step =
   desc: "Collect KAG chunk matches, driven by story_beats dramatic_functions (UI params override)"
