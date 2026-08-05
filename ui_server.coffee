@@ -1265,12 +1265,30 @@ handleKill = (req, res) ->
 
   return sendJson(res, 400, { ok: false, error: 'no active run pid recorded' }) unless pid > 0
 
+  # SIGTERM → SIGKILL escalation. The runner registers a SIGTERM
+  # handler (pipeline_runner.coffee ~2092), but during an in-process
+  # native MLX generation the main thread is inside a C++ call and
+  # the JS event loop can't spin — so the handler queues indefinitely.
+  # SIGTERM first (graceful if the runner IS idle between steps),
+  # then SIGKILL after ~1s if the process is still alive. See
+  # GPT/story/spystory.md (or the runner comment) for the diagnosis.
   try
     process.kill pid, 'SIGTERM'
   catch err
     return sendJson res, 500,
       ok: false
       error: String(err?.message ? err)
+
+  setTimeout (->
+    try
+      # signal 0 = liveness probe; throws ESRCH when the pid is gone.
+      process.kill pid, 0
+      process.kill pid, 'SIGKILL'
+      console.log "[kill] pid #{pid} did not exit on SIGTERM within 1s; sent SIGKILL"
+    catch
+      # process already gone — nothing to do.
+      null
+  ), 1000
 
   next = Object.assign {}, run,
     status: 'killing'

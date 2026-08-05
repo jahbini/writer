@@ -1,0 +1,80 @@
+# =====================================================================
+#   reset.yaml  —  the canonical bootstrap / reset recipe (was base_ite)
+# =====================================================================
+#
+#   The authoritative base/bootstrap chain for @jahbini/pipeline. Four
+#   steps, run inside a pipe's CWD (pipes/<pipe>/):
+#
+#     1. reset_base_environment_ite — wipe stale training/out artifacts
+#        and fire the sqliteResetAll request key so runtime.sqlite is
+#        truncated on the next meta touch.
+#     2. download_model — canonical git+git-lfs HuggingFace downloader
+#        (scripts/model/download_model.coffee, 188-line hardened path).
+#        NEVER the HF CLI, NEVER Python.
+#     3. quantize_model — MLX 4-bit convert. Idempotent on re-run.
+#     4. seed_story_sqlite — ingest markdown stories from data/*.md into
+#        the sqlite stories table.
+#
+#   After a green run, the pipe has:
+#     - build/model/          (raw HF download; can be rm -rf'd)
+#     - build/model4/         (self-contained quantized MLX; downstream
+#                              recipes reference this)
+#     - runtime.sqlite:stories populated + zero KAG rows (oracle will
+#                              start over on next oracle_ite run)
+#
+#   Project overrides:
+#     - Change `stories_md.source` if your markdown lives elsewhere.
+#     - Change `run.model` if you're bootstrapping a different HF repo.
+#     - Set `download_model.download_dir` / `quantize_model.src_dir` /
+#       `quantized_dir` to move the on-disk layout.
+#
+#   No other recipe `include:`s base_ite, so these steps don't bleed
+#   into diary_ite / oracle_ite / lora_ite / eval_ite runs.
+#
+run:
+  # `run.model` intentionally not set here (BASE-fork of the package
+  # recipe, 2026-08-05). The model identity is a pipe fact, not a
+  # recipe fact — each pipe's override.yaml must set it. The
+  # download_model step throws with a clear "Missing model param"
+  # message when it isn't. See GPT/story/model_identity.md.
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts:
+  stories_md:
+    source: data/stories.md
+  story_seed_ids:
+    target: out/story_seed_ids.json
+
+reset_base_environment_ite:
+  run: base_ite/reset_base_environment_ite.coffee
+  depends_on: []
+  needs: []
+  makes: []
+
+download_model:
+  run: model/download_model.coffee
+  depends_on: [reset_base_environment_ite]
+  needs: []
+  makes: []
+  download_dir: build/model
+
+quantize_model:
+  run: model/quantize_model.coffee
+  depends_on: [download_model]
+  needs: []
+  makes: []
+  src_dir: build/model
+  quantized_dir: build/model4
+  q_bits: 4
+
+seed_story_sqlite:
+  run: kag_oracle_ite/seed_story_sqlite.coffee
+  depends_on: [quantize_model]
+  needs: [stories_md]
+  makes: [story_seed_ids]
