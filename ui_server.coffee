@@ -307,6 +307,32 @@ loadDropdownOptions = (specPath) ->
         for ckpt in fs.readdirSync(full).sort() when /^\d+_adapters\.safetensors$/.test(ckpt)
           rows.push { key: "build/#{name}/#{ckpt}", label: "#{base} @#{parseInt(ckpt, 10)}" }
     return rows
+  if specPath is 'db/story_titles'
+    # Populated by the storacle recipe's `story_id` dropdown so a human
+    # can pick any story present in the pipe's runtime.sqlite. key =
+    # story_id (kebab-cased), label = title. Ordered by title. Empty
+    # list if the sqlite is missing or the stories table is empty —
+    # the UI will just render "(default)" and the step will throw on
+    # empty story_id.
+    dbPath = path.join CWD, 'runtime.sqlite'
+    return [] unless fs.existsSync dbPath
+    db = null
+    try
+      db = new DatabaseSync dbPath
+      rows = db.prepare("""
+        SELECT story_id, title
+        FROM stories
+        WHERE story_id IS NOT NULL AND TRIM(story_id) != ''
+        ORDER BY title ASC
+      """).all()
+      return ({
+        key: String(row.story_id)
+        label: String(row.title ? row.story_id)
+      } for row in rows when row?.story_id?)
+    catch
+      return []
+    finally
+      try db?.close() catch then null
   if specPath is 'db/kag_keywords'
     dbPath = path.join CWD, 'runtime.sqlite'
     fallbackRows = ({ key, label: key } for key in DEFAULT_KAG_KEYWORDS)

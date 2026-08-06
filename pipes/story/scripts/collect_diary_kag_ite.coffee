@@ -26,9 +26,11 @@
 # ── Dramatic_function → KAG keyword mapping ──────────────────────
 # Sourced from data/dramatic_grammars.yaml — dramatic_functions.<fn>.kag_emotion.
 # Selector: `grammar:` param in override/<recipe>.yaml (default: jim_tragedy).
-# kag_emotion values MUST be one of the 12 corpus keywords:
-#   anger, anxiety, contentment, disgust, fear, frustration,
-#   grief, joy, neutral, sadness, shame, surprise
+# kag_emotion values MUST be one of the allowed corpus keywords
+# (see ALLOWED_EMOTION_KEYWORDS in the oracle script — currently 17:
+# joy, contentment, sadness, grief, fear, anxiety, anger,
+# frustration, disgust, shame, surprise, neutral, absurd, wry,
+# playful, melancholy, mysterious).
 fs   = require 'fs'
 path = require 'path'
 yaml = require 'js-yaml'

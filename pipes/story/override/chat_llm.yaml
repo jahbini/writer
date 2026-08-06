@@ -1,0 +1,6 @@
+pipeline: chat_llm
+run:
+  model: Huihui-ai/Qwen3-4B-Instruct-2507-abliterated
+chat_llm:
+  llm:
+    maxTokens: 2000
