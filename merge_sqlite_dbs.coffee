@@ -36,26 +36,13 @@ BASE = do ->
 printUsage = ->
   console.log """
 usage:
-  coffee merge_sqlite_dbs.coffee [options]
+  coffee merge_sqlite_dbs.coffee --pipe NAME [--dry-run]
 
-layout:
-  server (trainer)  — PER-PIPE:    <remote-base>/pipes/<pipe>/{runtime.sqlite, build/adapter}
-  receiver (laptop) — PROJECT-LEVEL SHARED: <BASE>/{runtime.sqlite, build/adapter}
-  pipes on the receiver consume the shared db + adapter (different algorithms,
-  same common resources).
-
-optional:
-  --pipe NAME                      pipe name on the server (trainer side)
-  --local-pipe NAME                ignored; local is always shared at BASE
-  --remote-pipe NAME               remote pipe name under <remote-base>/pipes
-  --remote-host HOST               default: mac-mini.local
-  --remote-user USER               default: theaiguy
-  --remote-base PATH               remote project root (default: /Users/<user>/writediary)
-  --remote-db PATH                 default: <remote-base>/pipes/<pipe>/runtime.sqlite
-  --remote-adapter-dir PATH        default: <remote-base>/pipes/<pipe>/build/adapter
-  --local-db PATH                  default: <BASE>/runtime.sqlite  (SHARED)
-  --local-adapter-dir PATH         default: <BASE>/build/adapter   (SHARED)
-  --dry-run
+Everything else is derived. If the local pipe is at
+`~/<project>/pipes/NAME`, the merge pulls from
+`theaiguy@mac-mini.local:~/<project>/pipes/NAME/{runtime.sqlite,build/adapter}`
+into the same-named local spots. Same project name, same pipe name,
+same layout on both sides. Deliberately no knobs.
 
 authority policy:
   receiver keeps: stories, story_parts, expanded_story_parts, kag_entries
@@ -63,18 +50,10 @@ authority policy:
   lora_training_run_stories, lora_trained_stories, and build/adapter
 """
 
+# --- Argument parsing: just `--pipe NAME` and `--dry-run`.
 args = process.argv.slice 2
 opts =
   pipe: null
-  localPipe: null
-  remotePipe: null
-  remoteHost: 'mac-mini.local'
-  remoteUser: 'theaiguy'
-  remoteBase: null            # set after parsing, derived from remoteUser
-  remoteDb: null              # derived from remoteBase + pipe unless overridden
-  remoteAdapterDir: null      # derived from remoteBase unless overridden
-  localDb: null               # derived from BASE + pipe unless overridden
-  localAdapterDir: null       # defaults to shared <BASE>/build/adapter
   dryRun: false
 
 i = 0
@@ -82,68 +61,40 @@ while i < args.length
   arg = args[i]
   if arg is '--pipe'
     i += 1; opts.pipe = args[i]
-  else if arg is '--local-pipe'
-    i += 1; opts.localPipe = args[i]
-  else if arg is '--remote-pipe'
-    i += 1; opts.remotePipe = args[i]
-  else if arg is '--remote-host'
-    i += 1; opts.remoteHost = args[i]
-  else if arg is '--remote-user'
-    i += 1; opts.remoteUser = args[i]
-  else if arg is '--remote-base'
-    i += 1; opts.remoteBase = args[i]
-  else if arg is '--remote-db'
-    i += 1; opts.remoteDb = args[i]
-  else if arg is '--remote-adapter-dir'
-    i += 1; opts.remoteAdapterDir = args[i]
-  else if arg is '--local-db'
-    i += 1; opts.localDb = args[i]
-  else if arg is '--local-adapter-dir'
-    i += 1; opts.localAdapterDir = args[i]
   else if arg is '--dry-run'
     opts.dryRun = true
   else if arg in ['-h', '--help']
     printUsage(); process.exit 0
   else
-    throw new Error "Unknown arg #{arg}"
+    throw new Error "Unknown arg #{arg}. Only --pipe NAME and --dry-run are accepted."
   i += 1
 
 pipeName = if opts.pipe? and String(opts.pipe).trim().length then String(opts.pipe).trim() else null
-localPipeName = if opts.localPipe? and String(opts.localPipe).trim().length then String(opts.localPipe).trim() else pipeName
-remotePipeName = if opts.remotePipe? and String(opts.remotePipe).trim().length then String(opts.remotePipe).trim() else pipeName
+throw new Error 'missing --pipe NAME (the pipe to merge; same name is used on the trainer)' unless pipeName?
+if pipeName.includes('/') or pipeName.includes(path.sep) or pipeName in ['.', '..']
+  throw new Error "Invalid --pipe NAME: #{pipeName}"
 
-validatePipeName = (label, value) ->
-  return null unless value?
-  throw new Error "Invalid #{label}: #{value}" if value.includes('/') or value.includes(path.sep) or value in ['.', '..']
-  value
+# --- Fixed remote coordinates. Trainer is always `theaiguy@mac-mini.local`,
+#     project name mirrors the LOCAL BASE dir name, pipe name mirrors local.
+REMOTE_USER  = 'theaiguy'
+REMOTE_HOST  = 'mac-mini.local'
+projectName  = path.basename BASE            # e.g. 'writer'
+remoteBase   = "/Users/#{REMOTE_USER}/#{projectName}"
+remoteSpec   = "#{REMOTE_USER}@#{REMOTE_HOST}"
 
-localPipeName = validatePipeName 'local pipe name', localPipeName
-remotePipeName = validatePipeName 'remote pipe name', remotePipeName
+localDbPath      = path.join BASE,       'pipes', pipeName, 'runtime.sqlite'
+localAdapterDir  = path.join BASE,       'pipes', pipeName, 'build', 'adapter'
+remoteDbPath     = path.join remoteBase, 'pipes', pipeName, 'runtime.sqlite'
+remoteAdapterDir = path.join remoteBase, 'pipes', pipeName, 'build', 'adapter'
 
-# --- LOCAL (receiver) paths: PROJECT-LEVEL SHARED.
-#     One project = one runtime.sqlite + one build/adapter, both at BASE.
-#     All pipes consume these common resources (recipes read CWD/runtime.sqlite
-#     via a pipe-local symlink → ../../runtime.sqlite; the diary recipe loads
-#     ../../build/adapter). The merge target is the shared pair, NOT per-pipe.
-opts.localDb ?= path.join BASE, 'runtime.sqlite'
-opts.localAdapterDir ?= path.join BASE, 'build', 'adapter'
+# Provide the same names the downstream code expects. Keeps the rest
+# of this file untouched.
+opts.remoteDb          = remoteDbPath
+opts.remoteAdapterDir  = remoteAdapterDir
+opts.localDb           = localDbPath
+opts.localAdapterDir   = localAdapterDir
 
-# --- REMOTE (server / trainer) paths: PER-PIPE.
-#     The trainer pipe (e.g. mac-mini's pipes/diary) produces its own
-#     runtime.sqlite (lora_* rows) and build/adapter under itself; the merge
-#     ferries them to the receiver's shared spots.
-opts.remoteBase ?= "/Users/#{opts.remoteUser}/writediary"
-if remotePipeName?
-  opts.remoteDb ?= path.join opts.remoteBase, 'pipes', remotePipeName, 'runtime.sqlite'
-  opts.remoteAdapterDir ?= path.join opts.remoteBase, 'pipes', remotePipeName, 'build', 'adapter'
-throw new Error 'no --remote-db and no --remote-pipe to derive it from' unless opts.remoteDb?
-throw new Error 'no --remote-adapter-dir and no --remote-pipe to derive it from' unless opts.remoteAdapterDir?
-
-remoteSpec = if opts.remoteUser? then "#{opts.remoteUser}@#{opts.remoteHost}" else opts.remoteHost
-localDbPath = path.resolve opts.localDb
-localAdapterDir = path.resolve opts.localAdapterDir
-
-throw new Error "Local DB not found at #{localDbPath}" unless fs.existsSync localDbPath
+throw new Error "Local DB not found at #{localDbPath} — is the pipe initialized?" unless fs.existsSync localDbPath
 
 console.log "[merge_sqlite_dbs] BASE:", BASE
 console.log "[merge_sqlite_dbs] local DB:", localDbPath

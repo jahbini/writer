@@ -172,8 +172,47 @@ readMergeRun = ->
   normalizeMergeRun readJson(MERGE_RUN_PATH, {})
 
 resolveCoffeeBin = ->
+  # pnpm currently ships a broken shim at
+  #   <base>/node_modules/@jahbini/pipeline/node_modules/.bin/coffee
+  # that exec's `node "<basedir>/../../../../../../coffeescript@X/…/coffee"`
+  # — that's six `..` levels up from `.bin`, landing at $HOME, then
+  # appending `coffeescript@X/…`. Result: `/Users/<you>/coffeescript@X/…`
+  # which doesn't exist. When we spawn the shim, Node dies with
+  # `Cannot find module '/Users/<you>/coffeescript@X/…/coffee'`.
+  #
+  # Bypass strategy: look under the project's `.pnpm/` store for the
+  # real coffee entry point (`.pnpm/coffeescript@*/node_modules/coffeescript/bin/coffee`)
+  # and, when found, return it directly. Node treats a file path as a
+  # script to run, so `spawn(nodePath, [coffeePath, script, args...])`
+  # is the cleanest form — but existing callers spawn a single bin.
+  # So we return the absolute path to that entry point; Node's shebang
+  # `#!/opt/homebrew/opt/node/bin/node` (or similar) makes it directly
+  # executable IF the file is +x. When it isn't, fall through to the
+  # PATH-resolved `coffee` (Homebrew's system install).
+  pnpmRoot = path.join(BASE, 'node_modules', '.pnpm')
+  if fs.existsSync(pnpmRoot)
+    try
+      for entry in fs.readdirSync(pnpmRoot) when entry.startsWith('coffeescript@')
+        realCoffee = path.join(pnpmRoot, entry, 'node_modules', 'coffeescript', 'bin', 'coffee')
+        continue unless fs.existsSync realCoffee
+        # Only return it if it's executable. Otherwise Node has to be
+        # invoked with the file as its argv, which the caller isn't set
+        # up for — cleaner to fall through to `coffee` on PATH.
+        try
+          fs.accessSync realCoffee, fs.constants.X_OK
+          return realCoffee
+        catch
+          null
+    catch
+      null
+
+  # Fallback #1: the (possibly-broken) local shim. Kept for the older
+  # monolith layout where the shim IS correct — an npm install without
+  # pnpm produces a working shim here.
   localCoffee = path.join(EXEC_ROOT, 'node_modules', '.bin', 'coffee')
-  return localCoffee if fs.existsSync(localCoffee)
+  return localCoffee if fs.existsSync(localCoffee) and not fs.existsSync(pnpmRoot)
+
+  # Fallback #2: system coffee via PATH (Homebrew's install).
   'coffee'
 
 workspacePipeName = (workspacePath = CWD) ->
@@ -1161,6 +1200,9 @@ startMerge = (pipeName) ->
   outFd = fs.openSync logPath, 'a'
   errFd = fs.openSync errPath, 'a'
 
+  # merge_sqlite_dbs takes exactly `--pipe NAME` (and optionally
+  # `--dry-run`); everything else is derived from BASE + pipeName.
+  # Trainer is always `theaiguy@mac-mini.local:~/<project>/pipes/<pipe>`.
   child = spawn resolveCoffeeBin(), [MERGE_SCRIPT, '--pipe', pipeName],
     cwd: EXEC_ROOT
     detached: true
