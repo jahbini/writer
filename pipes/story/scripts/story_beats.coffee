@@ -17,12 +17,19 @@ yaml = require 'js-yaml'
 
 lepa = require path.join(__dirname, 'lepa.coffee')
 
-readGrammar = (name) ->
-  libPath = path.join process.cwd(), 'data', 'dramatic_grammars.yaml'
-  doc = yaml.load fs.readFileSync(libPath, 'utf8')
+# Meta yaml device (see GPT/CONVENTIONS.md). Standalone/probe fallback
+# preserved so `readGrammar('spy')` works from a test harness.
+readGrammar = (name, L) ->
+  key = 'data/dramatic_grammars.yaml'
+  doc =
+    if L?.theLowdown?
+      L.theLowdown(key)?.value
+    else
+      libPath = path.join process.cwd(), key
+      yaml.load fs.readFileSync(libPath, 'utf8')
   grammar = doc?.grammars?[name]
   unless grammar?
-    throw new Error "[story_beats] grammar '#{name}' not found in #{libPath} (available: #{Object.keys(doc?.grammars ? {}).join(', ') or '(none)'})"
+    throw new Error "[story_beats] grammar '#{name}' not found (available: #{Object.keys(doc?.grammars ? {}).join(', ') or '(none)'})"
   grammar
 
 # Phase 2: render the "Movement vocabulary" block from the grammar's
@@ -48,6 +55,41 @@ buildBeatVocabularyBlock = (grammar, arcana) ->
       pn = String(e?.public_name ? '').trim()
       mv = String(e?.movement ? '').trim()
       parts.push "    #{pn}: #{mv}"
+    parts.push ""
+  parts.join('\n').replace(/\n+$/, '')
+
+# SKYGUY Phase 3 — I Ching situation vocabulary. Called only when
+# use_iching_beats is on AND spine.situation exists (which requires
+# use_iching_situations on too). Renders ONLY render-safe strings:
+# situation.frame, tension.need/protection, and drawn_stages[].text
+# in bottom→top order. NEVER emits "hexagram" / "I Ching" / "trigram"
+# / "moving line" / any name_internal / any glyph — that hygiene rule
+# is enforced by keeping the situation_caster's `_internal` block on
+# the artifact side (never lifted into spine.situation).
+buildSituationVocabularyBlock = (situation) ->
+  return '' unless situation? and typeof situation is 'object'
+  frame = String(situation.frame ? '').trim()
+  need = String(situation.tension?.need ? '').trim()
+  protect = String(situation.tension?.protection ? '').trim()
+  stages = (s for s in (situation.drawn_stages ? []) when s?.text? and String(s.text).trim().length)
+  return '' unless frame.length or stages.length
+  parts = []
+  parts.push "SITUATION VOCABULARY"
+  parts.push "---------------------------------------------------------------"
+  parts.push "The chapter's circumstance (its frame):"
+  parts.push "  #{frame}" if frame.length
+  parts.push ""
+  if need.length or protect.length
+    parts.push "Story-scale tension:"
+    parts.push "  need:       #{need}"       if need.length
+    parts.push "  protection: #{protect}"    if protect.length
+    parts.push ""
+  if stages.length
+    parts.push "This chapter's beats SHOULD trace the following pressure arc,"
+    parts.push "in the order given. Each is one movement of the situation;"
+    parts.push "use the movement, not the phrasing verbatim."
+    for s in stages
+      parts.push "  - #{String(s.text).trim()}"
     parts.push ""
   parts.join('\n').replace(/\n+$/, '')
 
@@ -267,9 +309,10 @@ RULES
 Return the JSON now.
 """
 
-@buildPrompt              = buildPrompt
-@readGrammar              = readGrammar
-@buildBeatVocabularyBlock = buildBeatVocabularyBlock
+@buildPrompt                    = buildPrompt
+@readGrammar                    = readGrammar
+@buildBeatVocabularyBlock       = buildBeatVocabularyBlock
+@buildSituationVocabularyBlock  = buildSituationVocabularyBlock
 
 @step =
   desc: "Convert story_spine_json into ordered abstract Story Beats (JSON only)"
@@ -280,16 +323,28 @@ Return the JSON now.
     if spine?.parse_error
       throw new Error "[story_beats] upstream story_spine returned parse_error; cannot plan beats"
 
-    grammar = readGrammar S.param('grammar', 'jim_tragedy')
+    grammar = readGrammar S.param('grammar', 'jim_tragedy'), S
 
-    # Phase 2 (LEPA): optional beat vocabulary from minor arcana.
-    # Default absent/false → vocab block is empty → prompt is
-    # byte-identical to the pre-Phase-2 baseline. See
-    # GPT/story/lepa_integration.md.
-    vocabBlock = ''
+    # Two independently-gated vocabulary blocks that append to the
+    # prompt in a fixed order. Both default OFF, so pre-vocab
+    # baseline output is byte-identical when neither gate is set.
+    #
+    # (1) LEPA Phase 2: optional beat vocabulary from minor arcana.
+    #     See GPT/story/lepa_integration.md.
+    # (2) SKYGUY Phase 3: optional situation vocabulary from the
+    #     drawn stages of the current chapter's situation. Requires
+    #     spine.situation, which story_spine only populates when
+    #     situation_caster's use_iching_situations gate is on. See
+    #     GPT/story/skyguy_iching_layer.md.
+    vocabParts = []
     if S.param 'beat_vocabulary', false
-      arcana = lepa.loadArcana()
-      vocabBlock = buildBeatVocabularyBlock grammar, arcana
+      arcana = lepa.loadArcana(S)
+      arcanaBlock = buildBeatVocabularyBlock grammar, arcana
+      vocabParts.push arcanaBlock if arcanaBlock.length
+    if S.param('use_iching_beats', false) and spine?.situation?
+      ichingBlock = buildSituationVocabularyBlock spine.situation
+      vocabParts.push ichingBlock if ichingBlock.length
+    vocabBlock = vocabParts.join('\n\n')
 
     prompt = buildPrompt spine, grammar, vocabBlock
 

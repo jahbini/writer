@@ -346,6 +346,44 @@ loadDropdownOptions = (specPath) ->
         for ckpt in fs.readdirSync(full).sort() when /^\d+_adapters\.safetensors$/.test(ckpt)
           rows.push { key: "build/#{name}/#{ckpt}", label: "#{base} @#{parseInt(ckpt, 10)}" }
     return rows
+  if specPath is 'db/grammars'
+    # Grammar names from data/dramatic_grammars.yaml — one row per
+    # top-level grammar key (jim_tragedy, spy, …). Label = the key
+    # verbatim; a short desc from the YAML would be nicer but the UI's
+    # dropdown renderer shows the label only.
+    grammarsPath = path.join CWD, 'data', 'dramatic_grammars.yaml'
+    return [] unless fs.existsSync grammarsPath
+    try
+      doc = readYaml grammarsPath
+      return ({ key: String(name), label: String(name) } for name of (doc?.grammars ? {}))
+    catch
+      return []
+  if specPath is 'db/iching_situations'
+    # 64 canonical situations from data/iching_situations.yaml. Key =
+    # the id as a string; label = "N — <situation string, truncated>"
+    # so the human can eyeball what they're picking. HYGIENE: label
+    # renders the RENDER-SAFE `situation` field, never name_internal
+    # or glyph_binary.
+    sitPath = path.join CWD, 'data', 'iching_situations.yaml'
+    return [] unless fs.existsSync sitPath
+    try
+      doc = readYaml sitPath
+      rows = []
+      for entry in (doc?.situations ? []) when Number.isInteger(entry?.id)
+        situationText = String(entry?.situation ? '').replace(/\s+/g, ' ').trim()
+        short = if situationText.length > 60 then situationText[0...57] + '…' else situationText
+        rows.push { key: String(entry.id), label: "#{entry.id} — #{short}" }
+      return rows
+    catch
+      return []
+  if specPath is 'db/moving_line_counts'
+    # Small fixed dropdown: blank = seeded default, else 3/4/5.
+    return [
+      { key: '',  label: '(seeded 3–5)' }
+      { key: '3', label: '3' }
+      { key: '4', label: '4' }
+      { key: '5', label: '5' }
+    ]
   if specPath is 'db/story_titles'
     # Populated by the storacle recipe's `story_id` dropdown so a human
     # can pick any story present in the pipe's runtime.sqlite. key =
@@ -426,9 +464,22 @@ loadDropdownOptions = (specPath) ->
   rows.sort (a, b) -> String(a.label).localeCompare String(b.label) unless preserveOrder
   rows
 
-scanUiFields = (recipe, override, uiControl) ->
+scanUiFields = (recipe, valueSource, uiControl, extraDirectiveSources = []) ->
+  # `valueSource` supplies CURRENT VALUES via getByPath (controlOverride
+  # for the render pass, the recipe-scoped override for the save-handler
+  # pass). `extraDirectiveSources` is a list of additional objects to
+  # walk for `UI_checkbox` / `UI_dropdown` / `UI_textarea` directives —
+  # this is what lets steps registered via override (SKYGUY's
+  # situation_caster, LEPA's cast_genesis, etc.) declare their own
+  # directives without editing the recipe. Recipe wins on path
+  # collision (recipe is canonical); extras only add new paths.
   pendingUi = uiControl?.ui_values ? {}
   rows = []
+  seenPaths = new Set()
+
+  # Historical arg name inside the function body — keep it named
+  # `override` locally so the value-lookup calls below still read.
+  override = valueSource
 
   buildLabel = (pathText) ->
     parts = String(pathText ? '').split('.')
@@ -438,6 +489,11 @@ scanUiFields = (recipe, override, uiControl) ->
       keyName = parts[parts.length - 1]
       return "#{stepName}: #{keyName}"
     pathText
+
+  pushRow = (row) ->
+    return if seenPaths.has row.path
+    seenPaths.add row.path
+    rows.push row
 
   walk = (node, prefix = '') ->
     return unless node? and typeof node is 'object'
@@ -450,7 +506,7 @@ scanUiFields = (recipe, override, uiControl) ->
         else
           overrideValue = getByPath override, prefix
           if typeof overrideValue is 'boolean' then overrideValue else defaultValue
-        rows.push
+        pushRow
           path: prefix
           label: buildLabel(prefix)
           type: 'checkbox'
@@ -465,7 +521,7 @@ scanUiFields = (recipe, override, uiControl) ->
           overrideValue = getByPath override, prefix
           if typeof overrideValue is 'string' then overrideValue else defaultValue
         sourceParts = sourcePath.split('/')
-        rows.push
+        pushRow
           path: prefix
           label: buildLabel(prefix)
           type: 'dropdown'
@@ -480,7 +536,7 @@ scanUiFields = (recipe, override, uiControl) ->
         else
           overrideValue = getByPath override, prefix
           if typeof overrideValue is 'string' then overrideValue else defaultValue
-        rows.push
+        pushRow
           path: prefix
           label: buildLabel(prefix)
           type: 'textarea'
@@ -494,6 +550,8 @@ scanUiFields = (recipe, override, uiControl) ->
       walk value, currentPath
 
   walk recipe
+  for src in (extraDirectiveSources ? [])
+    walk src
 
   # Group diary event fields by event kind so each event renders as
   # `select_story_recipe.<kind>` immediately followed by
@@ -733,7 +791,12 @@ buildControls = ->
   else
     ''
   experimentText = if fs.existsSync(path.join(CWD, 'experiment.yaml')) then readText(path.join(CWD, 'experiment.yaml'), '') else ''
-  uiFields = scanUiFields recipe, controlOverride, uiControl
+  # Values come from controlOverride (UI-managed per-run state);
+  # directives can live in the recipe OR in the recipe-scoped override
+  # (override/<recipe>.yaml). This lets steps registered via override
+  # attach UI_checkbox / UI_dropdown / UI_textarea directives without
+  # editing the recipe.
+  uiFields = scanUiFields recipe, controlOverride, uiControl, [override]
 
   {
     pipeline: pipelineName
@@ -1031,7 +1094,7 @@ buildOverrideObject = (payload) ->
   else
     delete override.select_story_recipe
 
-  uiFields = scanUiFields recipe, override, { ui_values: payload.ui_values ? {} }
+  uiFields = scanUiFields recipe, override, { ui_values: payload.ui_values ? {} }, [override]
   for field in uiFields
     chosenValue = if payload?.ui_values? and Object::hasOwnProperty.call(payload.ui_values, field.path)
       payload.ui_values[field.path]

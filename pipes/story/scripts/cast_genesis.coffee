@@ -63,7 +63,7 @@ mintSheet = (entry, archetypes) ->
     outline = coerceJSON outline
 
     entries = outline?.unresolved_cast ? []
-    fw = lepa.loadFramework()
+    fw = lepa.loadFramework(S)
     archetypes = fw?.character_archetypes ? {}
 
     sheets = (mintSheet(e, archetypes) for e in entries)

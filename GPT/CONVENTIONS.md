@@ -50,6 +50,45 @@ Rules the human has stated explicitly. Read this at session start.
   directly for exploring the C++ API, headers, kernel implementations,
   and op signatures. Do not modify it.
 
+## File system access — always through the meta devices
+
+**Hard rule.** Every filesystem read and write inside a step's action
+goes through the meta devices — `L.theLowdown(key)?.value` for reads,
+`L.saveThis(key, value)` (or `L.make(artifactName, value)`) for writes.
+Never `fs.readFileSync`, `fs.writeFileSync`, `fs.existsSync +
+fs.readFileSync`, or `new DatabaseSync(...)` directly.
+
+Meta covers everything: YAML (`meta/yaml.coffee`), JSON (`meta/json.coffee`),
+JSONL, TXT (`.txt` / `.md`), CSV, and SQLite request keys
+(`storyByID{X}.json`, `kagByKeyword{K}.jsonl`, `partsFor{X}.jsonl`, …
+see `meta/sqlite.coffee`). If a device for your case doesn't exist,
+add one to `meta/` — don't route around.
+
+**Why this is chiseled in stone.** The Memo can only be trusted to
+memoize, invalidate, fire notifiers/waiters, and swap backends
+(sqlite instead of file; remote instead of local; snapshot instead of
+live) when EVERY read passes through it. A raw `fs` read is a hole
+the Memo can't see — the cache stays stale, notifiers don't fire,
+`experiment.yaml` no longer describes what the run actually did, and
+downstream steps race against invisible state changes. Reliability
+and responsiveness both collapse the moment one script cheats.
+
+**Helper modules** (e.g. `pipes/story/scripts/lepa.coffee`,
+`pipes/story/scripts/iching.coffee`) accept the ledger as an optional
+first argument and use `L.theLowdown` when it's present; the fs
+fallback is ONLY for standalone / probe callers that have no memo.
+Steps in the action never take the fallback — always pass `S` / `L`.
+
+**Path form is CWD-relative.** `L.theLowdown('data/foo.yaml')`, not
+absolute paths, not `process.cwd()` gymnastics. The meta yaml device
+handles the EXEC fallback for you.
+
+**Files that don't live in the pipe.** If a data file lives outside
+the pipe dir (e.g. a project-wide reference under `GPT/`), symlink it
+into `pipes/<pipe>/data/` so the meta device (CWD-only for most
+rules) can find it. Example:
+`pipes/story/data/lepa_updated.json → GPT/lepa-ite/lepa_updated.json`.
+
 ## Notes and memory
 
 - ALL working notes go in `GPT/` or `gypsy/` so they are committed to the

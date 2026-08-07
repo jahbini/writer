@@ -15,7 +15,13 @@ yaml = require 'js-yaml'
 
 lepa = require path.join(__dirname, 'lepa.coffee')
 
-readAtomsLibrary = ->
+# Use the runner's meta yaml device (see GPT/CONVENTIONS.md — meta
+# methods for file system access). L.theLowdown for `.yaml` keys
+# parses via meta/yaml.coffee. When called without L (e.g. from a
+# probe) falls back to fs.
+readAtomsLibrary = (L) ->
+  if L?.theLowdown?
+    return L.theLowdown('data/jim_story_library.yaml')?.value
   libPath = path.join process.cwd(), 'data', 'jim_story_library.yaml'
   yaml.load fs.readFileSync(libPath, 'utf8')
 
@@ -332,9 +338,9 @@ Return the JSON now.
     description = String(S.param('story_description', '') ? '').trim()
     throw new Error "[story_outline] story_description is empty; enter a story description in the UI textarea" unless description.length
 
-    lib = readAtomsLibrary()
+    lib = readAtomsLibrary(S)
     atoms = lib?.story_atoms ? {}
-    fw = lepa.loadFramework()
+    fw = lepa.loadFramework(S)
     archetypes = fw?.character_archetypes ? {}
 
     prompt = buildPrompt description, atoms, archetypes

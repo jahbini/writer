@@ -42,6 +42,7 @@ runtime.sqlite.backup-*
 build/
 artifacts/
 data/
+diary/
 data_report.json
 eval_out/
 out/

@@ -79,10 +79,74 @@ coerceJSON = (value) ->
   catch
     value
 
+# ─── SKYGUY Phase 4: forbidden-surface scrub ──────────────────────
+# The hard rule (iching_casting.yaml voice_policy): the words hexagram
+# / I Ching / trigram / moving line, hexagram numbers ("hexagram 42"),
+# and pinyin name_internal tokens (qian_creative, kun_receptive, …)
+# NEVER reach a generator prompt. The upstream boundaries already
+# enforce this — situation_caster keeps ids/glyphs/trigrams under an
+# `_internal` block that never crosses into spine — but this is the
+# last chance to catch a slipup. Throw loud with the exact term and
+# a 40-char context window so the leak's origin can be traced.
+#
+# Loads the iching name_internal list lazily; if the iching data is
+# absent (older pipes without SKYGUY yet), just skip the pinyin scan
+# — the fixed forbidden phrases still fire.
+loadIchingNameInternals = (L) ->
+  try
+    ichingPath = path.join(process.cwd(), 'scripts', 'iching.coffee')
+    return [] unless fs.existsSync ichingPath
+    iching = require ichingPath
+    doc = iching.loadAll(L)
+    (e.name_internal for e in (doc?.situations?.situations ? []) when typeof e?.name_internal is 'string' and e.name_internal.length)
+  catch
+    []
+
+SKYGUY_FORBIDDEN_PHRASES = [
+  # word-boundary regexes; case-insensitive
+  /\bhexagram\b/i
+  /\bi[- ]?ching\b/i
+  /\btrigram\b/i
+  /\bmoving line\b/i
+]
+
+scrubForbiddenSurfaceTerms = (promptText, extraTokens = []) ->
+  return unless typeof promptText is 'string' and promptText.length
+  hits = []
+  for re in SKYGUY_FORBIDDEN_PHRASES
+    m = promptText.match re
+    if m?
+      hits.push {term: m[0], index: m.index, rule: 'fixed_phrase'}
+  for tok in extraTokens
+    continue unless typeof tok is 'string' and tok.length
+    # name_internal tokens have `_` separators — match as one word.
+    re = new RegExp "\\b" + tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "\\b", 'i'
+    m = promptText.match re
+    if m?
+      hits.push {term: m[0], index: m.index, rule: 'name_internal_token'}
+  return if hits.length is 0
+  # Contextual throw: first offender, with a 40-char window around it.
+  h = hits[0]
+  lo = Math.max 0, h.index - 40
+  hi = Math.min promptText.length, h.index + h.term.length + 40
+  ctx = promptText[lo...hi].replace(/\n/g, ' ')
+  throw new Error """
+  [build_diary_prompt] hygiene violation: forbidden surface term
+  reached the generator prompt (rule=#{h.rule}). This should have been
+  stripped at the spine boundary — trace back to see what leaked.
+    term:      #{JSON.stringify h.term}
+    at char:   #{h.index}
+    context:   …#{ctx}…
+    total hits (this scan): #{hits.length}
+  """
+
 # ─── Story-spine folding (LOCAL FORK) ─────────────────────────────
 # The spine now carries ONLY dramatic necessity: title, premise, axis,
 # protected facts, and the three question kinds. No scenes, no causal
 # chain, no staging. Beats/scenes come from later stages when added.
+@scrubForbiddenSurfaceTerms = scrubForbiddenSurfaceTerms
+@SKYGUY_FORBIDDEN_PHRASES   = SKYGUY_FORBIDDEN_PHRASES
+
 renderSpine = (spine) ->
   return null unless spine? and typeof spine is 'object' and spine.story?
   return null if spine.parse_error
@@ -317,6 +381,12 @@ stay true". Return only the letter.
       ""
       finalInstruction
     ].join "\n"
+
+    # SKYGUY Phase 4 hygiene: final scrub before persisting.
+    # loadIchingNameInternals() returns [] if the iching data isn't in
+    # this pipe (older pipes without the SKYGUY layer), so this is a
+    # no-op for pre-SKYGUY installs.
+    scrubForbiddenSurfaceTerms prompt, loadIchingNameInternals(L)
 
     console.log "[build_diary_prompt_ite] prompt chars:", prompt.length,
       "| passages:", (if includePassages then passageLines.length else "off"),

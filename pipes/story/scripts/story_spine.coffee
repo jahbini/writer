@@ -12,7 +12,11 @@ yaml = require 'js-yaml'
 # outline produced a plausible Tommy story instead of an error. Bad.
 # Now: broken outline → hard throw.
 
-readAtomsLibrary = ->
+# Meta yaml device (see GPT/CONVENTIONS.md). Standalone / probe
+# callers get an fs fallback.
+readAtomsLibrary = (L) ->
+  if L?.theLowdown?
+    return L.theLowdown('data/jim_story_library.yaml')?.value
   libPath = path.join process.cwd(), 'data', 'jim_story_library.yaml'
   yaml.load fs.readFileSync(libPath, 'utf8')
 
@@ -32,9 +36,14 @@ outlineIsUsable = (outline) ->
   return false unless outline.cast?.protagonist_label? and outline.lens_label?
   true
 
-readPriorChapterState = (chapterNumber) ->
+# Meta json device — returns undefined when the file's absent.
+# Standalone/probe fallback preserved for callers without L.
+readPriorChapterState = (L, chapterNumber) ->
   return null unless chapterNumber > 1
-  filePath = path.join process.cwd(), 'out', 'chapters', "ch_#{chapterNumber - 1}", 'chapter_state.json'
+  key = path.join 'out', 'chapters', "ch_#{chapterNumber - 1}", 'chapter_state.json'
+  if L?.theLowdown?
+    return L.theLowdown(key)?.value ? null
+  filePath = path.join process.cwd(), key
   return null unless fs.existsSync filePath
   try JSON.parse fs.readFileSync(filePath, 'utf8') catch e then null
 
@@ -74,9 +83,42 @@ mergeSupplementalCast = (outline, supplementDoc) ->
       supplemental.push entry
   { supplemental, slotAssignments }
 
+# Fold the I Ching situation into the spine. Runs only when the caster
+# artifact has enabled=true (gate off → sentinel → no-op). Adds a
+# render-safe `spine.situation` block that story_beats reads; when
+# chain_chapters is on, replaces terminal_state and
+# _outline_ref.next_chapter_trigger with the derived situation's
+# render-safe phrasing (per SKYGUY brief). HYGIENE: only situation
+# strings, tension.*, and drawn_stages[].text cross into the spine —
+# the internal ids / glyph / trigram bookkeeping stays in the
+# situation_cast_json artifact under its `_internal` key.
+foldSituationIntoSpine = (spine, situationDoc) ->
+  return unless situationDoc?.enabled is true
+  cur = situationDoc.current ? {}
+  der = situationDoc.derived ? {}
+  spine.situation =
+    frame: cur.situation
+    tension:
+      need: cur.tension?.need
+      protection: cur.tension?.protection
+    drawn_stages: (situationDoc.drawn_stages ? []).map (s) ->
+      # Render-safe projection: keep the text only; drop the .line
+      # ordinal so the moving-line concept can't leak downstream.
+      { text: s?.text }
+    next_frame: der.situation
+    # Convenience mirror so story_beats can use `spine.situation.conflict`
+    # as the story-scale conflict scaffolding for every beat.
+    conflict:
+      need: cur.tension?.need
+      protection: cur.tension?.protection
+  if situationDoc.chain_chapters isnt false
+    spine.story.terminal_state          = der.situation
+    spine._outline_ref.next_chapter_trigger = der.situation
+  return
+
 # Deterministic transform: outline entry + top-level cast/lens →
 # spine JSON with the shape downstream steps already consume.
-deriveSpineFromOutline = (outline, entry, priorState, lib, supplementDoc) ->
+deriveSpineFromOutline = (outline, entry, priorState, lib, supplementDoc, situationDoc) ->
   atoms = lib?.story_atoms ? {}
   cast =
     protagonist: null
@@ -161,6 +203,11 @@ deriveSpineFromOutline = (outline, entry, priorState, lib, supplementDoc) ->
       chapter_number:       entry.chapter_number
       next_chapter_trigger: entry.next_chapter_trigger
     _prior_state_used:    priorState?
+
+  # SKYGUY Phase 3: I Ching situation fold. No-op when the caster
+  # sentinel is enabled=false (gate off).
+  foldSituationIntoSpine spine, situationDoc
+
   spine
 
 @deriveSpineFromOutline = deriveSpineFromOutline
@@ -169,7 +216,7 @@ deriveSpineFromOutline = (outline, entry, priorState, lib, supplementDoc) ->
   desc: "Deterministic transform of story_outline_json[chapter_number-1] into spine"
 
   action: (S) ->
-    lib = readAtomsLibrary()
+    lib = readAtomsLibrary(S)
     unless lib?.story_atoms?
       throw new Error "[story_spine] atoms library missing story_atoms block at data/jim_story_library.yaml"
 
@@ -198,15 +245,20 @@ deriveSpineFromOutline = (outline, entry, priorState, lib, supplementDoc) ->
       throw new Error "[story_spine] chapter_number #{chapterNumber} out of range 1..#{chapters.length}"
     entry = chapters[chapterNumber - 1]
 
-    priorState = readPriorChapterState chapterNumber
+    priorState = readPriorChapterState S, chapterNumber
 
     supplementDoc = null
     try supplementDoc = await S.need 'cast_supplement' catch e then supplementDoc = null
     supplementDoc = coerceJSON supplementDoc
 
-    spine = deriveSpineFromOutline outline, entry, priorState, lib, supplementDoc
+    situationDoc = null
+    try situationDoc = await S.need 'situation_cast_json' catch e then situationDoc = null
+    situationDoc = coerceJSON situationDoc
+
+    spine = deriveSpineFromOutline outline, entry, priorState, lib, supplementDoc, situationDoc
     supN = (supplementDoc?.sheets ? []).length
-    console.log "[story_spine] outline-driven (ch=#{chapterNumber}, prior_state=#{if priorState? then 'yes' else 'no'}, supplemental=#{supN})"
+    sitTag = if situationDoc?.enabled is true then "situation=yes" else "situation=no"
+    console.log "[story_spine] outline-driven (ch=#{chapterNumber}, prior_state=#{if priorState? then 'yes' else 'no'}, supplemental=#{supN}, #{sitTag})"
 
     S.make 'story_spine_json', spine
     S.done()

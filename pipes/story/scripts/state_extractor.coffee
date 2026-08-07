@@ -86,17 +86,24 @@ parseChapterNumber = (raw) ->
 # `depends_on: [never]` via override, so exactly one of the two files
 # is present. Prefer the adapter output (higher voice fidelity) when
 # both exist. Returns null if neither file is present.
-readChapterFromDisk = ->
-  outDir = path.join process.cwd(), 'out'
-  candidates = [
-    path.join(outDir, 'diary_adapted.txt')
-    path.join(outDir, 'diary_base.txt')
-  ]
-  for f in candidates
-    continue unless fs.existsSync f
-    text = String(fs.readFileSync(f, 'utf8') ? '').trim()
-    continue unless text.length
-    return { path: f, text: text }
+# Read the chapter's finished text via the meta txt device (see
+# GPT/CONVENTIONS.md — meta methods for file system access). Meta txt
+# returns undefined when the file's absent; treat that like the old
+# `fs.existsSync` false branch.
+readChapterFromDisk = (L) ->
+  candidates = ['out/diary_adapted.txt', 'out/diary_base.txt']
+  for key in candidates
+    text =
+      if L?.theLowdown?
+        L.theLowdown(key)?.value
+      else
+        p = path.join process.cwd(), key
+        (if fs.existsSync p then fs.readFileSync p, 'utf8')
+    continue unless typeof text is 'string'
+    trimmed = text.trim()
+    continue unless trimmed.length
+    absPath = path.join process.cwd(), key
+    return { path: absPath, text: trimmed }
   null
 
 shapeLooksOk = (state) ->
@@ -262,7 +269,7 @@ Return the JSON now.
       catch e then null
 
     unless chapterText.length
-      found = readChapterFromDisk()
+      found = readChapterFromDisk(L)
       if found?
         chapterText = found.text
         console.log "[state_extractor] read chapter from #{found.path} (#{chapterText.length} chars)"

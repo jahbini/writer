@@ -1,4 +1,6 @@
-pipeline: spystory
+pipeline: story
+chapter_context:
+  chapter_number: '3'
 story_outline:
   story_description: |2-
       Tell me a story about the king of poodepoo trusting his guard with a sacred
@@ -6,7 +8,7 @@ story_outline:
       the treasure is stolen, but the guard chases the attacker and kills him and
       finally gets the treasure to the nephew
 generate_diary_with_adapter_ite:
-  adapter_path: build/adapter/0000200_adapters.safetensors
+  adapter_path: build/adapter/0000250_adapters.safetensors
 collect_diary_kag_ite:
   scene_emotion: frustration
   arrival_emotion: anxiety

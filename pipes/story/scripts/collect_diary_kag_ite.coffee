@@ -37,12 +37,19 @@ yaml = require 'js-yaml'
 
 DEFAULT_EMOTION = 'neutral'
 
-readGrammar = (name) ->
-  libPath = path.join process.cwd(), 'data', 'dramatic_grammars.yaml'
-  doc = yaml.load fs.readFileSync(libPath, 'utf8')
+# Meta yaml device (see GPT/CONVENTIONS.md). Standalone/probe fallback
+# preserved so tests that call readGrammar without L still work.
+readGrammar = (name, L) ->
+  key = 'data/dramatic_grammars.yaml'
+  doc =
+    if L?.theLowdown?
+      L.theLowdown(key)?.value
+    else
+      libPath = path.join process.cwd(), key
+      yaml.load fs.readFileSync(libPath, 'utf8')
   grammar = doc?.grammars?[name]
   unless grammar?
-    throw new Error "[collect_diary_kag_ite] grammar '#{name}' not found in #{libPath} (available: #{Object.keys(doc?.grammars ? {}).join(', ') or '(none)'})"
+    throw new Error "[collect_diary_kag_ite] grammar '#{name}' not found (available: #{Object.keys(doc?.grammars ? {}).join(', ') or '(none)'})"
   grammar
 
 buildBeatEmotionMap = (grammar) ->
@@ -216,7 +223,7 @@ derivePerKindEmotions = (L, beatsDoc, beatEmotionMap) ->
     limit = Number limitRaw
     throw new Error "[#{L.stepName}] per_event_match_limit must be a positive integer" unless Number.isFinite(limit) and limit > 0 and Math.floor(limit) is limit
 
-    grammar = readGrammar L.param('grammar', 'jim_tragedy')
+    grammar = readGrammar L.param('grammar', 'jim_tragedy'), L
     beatEmotionMap = buildBeatEmotionMap grammar
 
     { emotions, provenance } = derivePerKindEmotions L, beatsDoc, beatEmotionMap

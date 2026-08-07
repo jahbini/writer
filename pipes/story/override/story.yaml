@@ -7,6 +7,10 @@ pipeline: story
 artifacts:
   cast_supplement:
     target: out/cast_supplement.json
+  # SKYGUY Phase 2 (2026-08-07): situation_caster's artifact. Sentinel
+  # payload {enabled: false} when the master gate is off (see below).
+  situation_cast_json:
+    target: out/situation_cast.json
 
 cast_genesis:
   run: cast_genesis.coffee
@@ -14,21 +18,59 @@ cast_genesis:
   needs: [story_outline_json]
   makes: [cast_supplement]
 
+# ── SKYGUY Phase 2: situation_caster (I Ching situation layer) ─────
+# Deterministic, no LLM. Sibling to story_spine (needs description +
+# chapter_number). Gated on use_iching_situations; when off, emits
+# a sentinel and short-circuits — nothing downstream references
+# situation_cast_json in Phase 2, so pipeline behavior is unchanged
+# with the gate closed. See GPT/story/skyguy_iching_layer.md.
+#
+# All four param defaults mirror iching_casting.yaml's `param_defaults`
+# block. Enabling is Geemo's call; flip use_iching_situations to true
+# in this file (or in control_override.yaml) when ready.
+situation_caster:
+  run: situation_caster.coffee
+  depends_on: [story_outline, chapter_context]
+  needs: [story_outline_json, chapter_context]
+  makes: [situation_cast_json]
+  # UI-directive form: the params below appear as controls in the
+  # Recipe And Overrides pane. scanUiFields walks both recipe and
+  # override, so directives declared here get picked up. Defaults
+  # match iching_casting.yaml's `param_defaults` — all gates OFF.
+  use_iching_situations: [ UI_checkbox, false ]
+  situation_id:          [ UI_dropdown, db/iching_situations, "" ]
+  moving_line_count:     [ UI_dropdown, db/moving_line_counts, "" ]
+  chain_chapters:        [ UI_checkbox, true ]
+
 story_spine:
-  # story_spine now reads cast_supplement to fold genesis characters
-  # into spine.cast (label-only) — see LEAKAGE LAW.
-  depends_on: [story_outline, chapter_context, cast_genesis]
-  needs: [story_outline_json, chapter_context, cast_supplement]
+  # story_spine folds cast_supplement into spine.cast (label-only)
+  # per LEAKAGE LAW, and (SKYGUY Phase 3) situation_cast_json into
+  # spine.situation (render-safe fields only) when the caster's
+  # use_iching_situations gate is on. Gate off → caster sentinel →
+  # spine.situation absent, no behavior change.
+  depends_on: [story_outline, chapter_context, cast_genesis, situation_caster]
+  needs: [story_outline_json, chapter_context, cast_supplement, situation_cast_json]
 
 story_beats:
-  grammar: jim_tragedy
+  # Grammar picker — dropdown of top-level keys in
+  # data/dramatic_grammars.yaml (jim_tragedy, spy, …).
+  grammar:            [ UI_dropdown, db/grammars, jim_tragedy ]
+  # Minor-arcana beat vocabulary (LEPA Phase 2).
+  beat_vocabulary:    [ UI_checkbox, false ]
+  # SKYGUY Phase 3 situation vocabulary — depends on
+  # situation_caster.use_iching_situations also being on.
+  use_iching_beats:   [ UI_checkbox, false ]
 
 collect_diary_kag_ite:
-  grammar: jim_tragedy
+  # Same grammar picker — the two steps read the same grammar param.
+  grammar:            [ UI_dropdown, db/grammars, jim_tragedy ]
 
 generate_diary_with_adapter_ite:
   depends_on:
     - build_diary_prompt_ite
+  llm:
+    maxTokens: 5000
+    temperature: 0.7
 
 generate_diary_without_adapter_ite:
   depends_on:
