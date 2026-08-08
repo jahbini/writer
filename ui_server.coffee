@@ -1319,15 +1319,23 @@ handleLaunch = (req, res) ->
   pipeline = String(payload.pipeline ? '').trim()
   return sendJson(res, 400, { ok: false, error: 'pipeline is required' }) unless pipeline.length
 
-  writeUiControl
-    pending:
-      pipeline: pipeline
-      scene: payload.scene ? ''
-      arrival: payload.arrival ? ''
-      disturbance: payload.disturbance ? ''
-      reflection: payload.reflection ? ''
-      realization: payload.realization ? ''
-    ui_values: if payload.ui_values? and typeof payload.ui_values is 'object' then payload.ui_values else {}
+  # keep_params mode: reuse the previous run's config verbatim.
+  # Skip pushing new UI values into control_override — the runner
+  # then reads unchanged config, materializes the same experiment.yaml
+  # + params/, and clearStepState() (below) blanks state/ so every
+  # step re-executes. That's the "same params, fresh state" ask.
+  keepParams = payload.keep_params is true
+
+  unless keepParams
+    writeUiControl
+      pending:
+        pipeline: pipeline
+        scene: payload.scene ? ''
+        arrival: payload.arrival ? ''
+        disturbance: payload.disturbance ? ''
+        reflection: payload.reflection ? ''
+        realization: payload.realization ? ''
+      ui_values: if payload.ui_values? and typeof payload.ui_values is 'object' then payload.ui_values else {}
 
   if payload.continuous is true
     repeatLoop.enabled = true
@@ -1338,12 +1346,18 @@ handleLaunch = (req, res) ->
       continuous_delay_seconds: repeatLoop.delay_seconds
   else
     stopRepeatLoop()
-  overrideText = if typeof payload.control_override_text is 'string' and payload.control_override_text.trim().length
-    payload.control_override_text
+  override = null
+  unless keepParams
+    overrideText = if typeof payload.control_override_text is 'string' and payload.control_override_text.trim().length
+      payload.control_override_text
+    else
+      dumpYaml buildOverrideObject(payload)
+    writeUiControl control_override_text: overrideText
+    override = writeControlOverrideText overrideText
   else
-    dumpYaml buildOverrideObject(payload)
-  writeUiControl control_override_text: overrideText
-  override = writeControlOverrideText overrideText
+    # Read the existing control_override.yaml so the response payload
+    # can still report what pipeline is about to run.
+    override = readControlOverride()
   attachedRun = findActiveWorkspaceRun()
   if attachedRun?
     writeUiRunPatch
@@ -1664,6 +1678,193 @@ server = http.createServer (req, res) ->
     return sendHtml res, resolveUiAsset('index.html')
   if url is '/api/status'
     return sendJson res, 200, buildStatus()
+  if url.startsWith('/api/step_detail?')
+    # Return the state file and params file for one step so the SVG
+    # click-popup can show status + inputs and offer a restart button.
+    query = new URL(url, 'http://127.0.0.1').searchParams
+    name = String(query.get('name') ? '').trim()
+    return sendJson(res, 400, { ok: false, error: 'name required' }) unless name.length
+    return sendJson(res, 400, { ok: false, error: "invalid step name: #{name}" }) if name.includes('/') or name.includes(path.sep) or name in ['.', '..']
+    stateFile = path.join(CWD, 'state', "step-#{name}.json")
+    paramsFile = path.join(CWD, 'params', "#{name}.yaml")
+    state = null
+    stateErr = null
+    if fs.existsSync stateFile
+      try
+        state = JSON.parse fs.readFileSync(stateFile, 'utf8')
+      catch err
+        stateErr = String(err?.message ? err)
+    params_text = null
+    paramsErr = null
+    if fs.existsSync paramsFile
+      try
+        params_text = fs.readFileSync paramsFile, 'utf8'
+      catch err
+        paramsErr = String(err?.message ? err)
+    return sendJson res, 200,
+      ok: true
+      name: name
+      state: state
+      state_error: stateErr
+      state_path: path.relative(CWD, stateFile)
+      params_text: params_text
+      params_error: paramsErr
+      params_path: path.relative(CWD, paramsFile)
+  if url is '/api/step_restart' and req.method is 'POST'
+    # Sanctioned restart via the runner's `restart_here` protocol
+    # (pipeline_runner.coffee §6). Set restart_here=true on the
+    # target step's existing state file — the runner picks that up
+    # at startup, deletes state for that step + every DOWNSTREAM
+    # step, clears the flag, and runs. Upstream state stays intact;
+    # control_override and params/ are untouched.
+    #
+    # SELECTIVE UPSTREAM CASCADE: the runner's `resolveArtifact`
+    # infinite-waits when a done upstream step's output file is
+    # missing from disk (producer done → won't re-run; memo empty →
+    # await notifier never fires). To break that, we also set
+    # restart_here on ANY transitive dependency whose declared output
+    # target file is absent from disk. Steps whose outputs are all
+    # present stay done.
+    bodyText = await readRequestBody req
+    payload = {}
+    try payload = JSON.parse(bodyText ? '{}') catch
+      return sendJson res, 400, { ok: false, error: 'invalid json body' }
+    name = String(payload?.name ? '').trim()
+    return sendJson(res, 400, { ok: false, error: 'name required' }) unless name.length
+    return sendJson(res, 400, { ok: false, error: "invalid step name: #{name}" }) if name.includes('/') or name.includes(path.sep) or name in ['.', '..']
+
+    attachedRun = findActiveWorkspaceRun()
+    if attachedRun?
+      return sendJson res, 200,
+        ok: true
+        attached: true
+        pid: attachedRun.pid
+        note: "a runner is already alive; restart_here NOT set (would race with the running pipeline). Kill the run first, then retry."
+
+    # Load the merged experiment (recipe + overrides + control) so we
+    # can walk depends_on and check each step's `makes:` artifact
+    # target files. Read from disk; the experiment.yaml is the last
+    # run's materialized effective config, which is what the runner
+    # will read again next launch.
+    experimentPath = path.join(CWD, 'experiment.yaml')
+    unless fs.existsSync experimentPath
+      return sendJson res, 400, { ok: false, error: "no experiment.yaml — run the pipeline once before using restart" }
+    experiment = null
+    try
+      experiment = yaml.load fs.readFileSync(experimentPath, 'utf8')
+    catch err
+      return sendJson res, 500, { ok: false, error: "cannot parse experiment.yaml: #{err?.message ? err}" }
+
+    RESERVED = ['run', 'artifacts', 'pipeline']
+    steps = {}
+    for own k, v of experiment when k not in RESERVED and v? and typeof v is 'object' and v.run?
+      steps[k] = v
+    artifacts = experiment?.artifacts ? {}
+    return sendJson(res, 404, { ok: false, error: "step '#{name}' not found in experiment.yaml" }) unless steps[name]?
+
+    # For a step, are all its `makes:` targets present on disk?
+    stepOutputsPresent = (stepName) ->
+      makes = steps[stepName]?.makes ? []
+      return true if makes.length is 0     # nothing to produce → satisfied
+      for artKey in makes
+        target = artifacts[artKey]?.target
+        continue unless typeof target is 'string' and target.length
+        full = path.join CWD, target
+        return false unless fs.existsSync full
+      true
+
+    # Selective cascade: BFS upstream from `name`, adding to the
+    # `toRestart` set any ancestor that has at least one missing
+    # output. Ancestors whose outputs are all on disk stay done.
+    toRestart = new Set([name])
+    missingOutputs = {}   # stepName → [target paths] for the response
+    frontier = [name]
+    seen = new Set([name])
+    while frontier.length
+      cur = frontier.shift()
+      for dep in (steps[cur]?.depends_on ? [])
+        continue if seen.has(dep)
+        seen.add dep
+        continue unless steps[dep]?    # skip 'never' / undefined
+        unless stepOutputsPresent(dep)
+          toRestart.add dep
+          missingOutputs[dep] = (
+            for artKey in (steps[dep].makes ? [])
+              target = artifacts[artKey]?.target
+              continue unless typeof target is 'string' and target.length
+              full = path.join CWD, target
+              path.relative(CWD, full) unless fs.existsSync full
+          ).filter (t) -> t?
+          # Only recurse when this dep is being restarted — its own
+          # ancestors then need the same test (its outputs will be
+          # re-derived). If it's staying done, its ancestors are
+          # implicitly fine (memo reads their outputs via meta).
+          frontier.push dep
+
+    # Mark each step in toRestart with restart_here=true.
+    markedList = []
+    unmarkedList = []
+    for step in Array.from(toRestart)
+      stateFile = path.join(CWD, 'state', "step-#{step}.json")
+      if fs.existsSync stateFile
+        try
+          st = JSON.parse fs.readFileSync(stateFile, 'utf8')
+        catch err
+          return sendJson res, 500, { ok: false, error: "cannot read #{path.relative(CWD, stateFile)}: #{err?.message ? err}" }
+        st.restart_here = true
+        st.updated_at = new Date().toISOString()
+        fs.writeFileSync stateFile, JSON.stringify(st, null, 2), 'utf8'
+        markedList.push step
+      else
+        # No state file yet — the step is already "unmarked" in the
+        # runner's eyes and will run on launch. No write needed.
+        unmarkedList.push step
+
+    # pipeline.json is the sacred "we crashed last time" gate — its
+    # presence causes the runner to exit at startup. Remove it so
+    # this restart can actually start.
+    pipelinePath = path.join(CWD, 'pipeline.json')
+    removedPipelineJson = false
+    if fs.existsSync pipelinePath
+      fs.unlinkSync pipelinePath
+      removedPipelineJson = true
+
+    launch = startRunner()
+    seedUiRun launch, readControlOverride()
+    return sendJson res, 200,
+      ok: true
+      name: name
+      restart_here_marked: markedList          # steps whose state files got restart_here=true
+      already_unmarked: unmarkedList           # steps with no state file (will run on launch)
+      cascaded_upstream: Object.keys(missingOutputs)
+      missing_outputs: missingOutputs          # per step: which target files were missing
+      removed_pipeline_json: removedPipelineJson
+      pid: launch.pid
+      hh_mm: launch.hh_mm
+      logdir: launch.logdir
+  if url is '/api/pipeline_svg' and req.method is 'GET'
+    # Render the CURRENT pipe's experiment.yaml as a DAG SVG using
+    # ../../pipeline_svg.coffee (self-contained styles, data-step attrs
+    # so downstream JS can toggle .running / .done classes to sync
+    # with #steps-body). No cache: hot-reload the renderer on every
+    # request so edits to pipeline_svg.coffee land without a restart.
+    expPath = path.join(CWD, 'experiment.yaml')
+    unless fs.existsSync expPath
+      res.writeHead 404, { 'Content-Type': 'text/plain; charset=utf-8' }
+      return res.end 'no experiment.yaml yet — run the pipeline once, then reload.'
+    try
+      scriptPath = path.join(BASE, 'pipeline_svg.coffee')
+      delete require.cache[require.resolve(scriptPath)] if require.cache[require.resolve(scriptPath)]?
+      { renderSvg } = require scriptPath
+      doc = yaml.load fs.readFileSync(expPath, 'utf8')
+      svg = renderSvg doc
+      res.writeHead 200,
+        'Content-Type': 'image/svg+xml; charset=utf-8'
+        'Cache-Control': 'no-store'
+      return res.end svg
+    catch err
+      res.writeHead 500, { 'Content-Type': 'text/plain; charset=utf-8' }
+      return res.end "[pipeline_svg] #{err?.message ? err}"
   if url.startsWith('/api/file?')
     query = new URL(url, 'http://127.0.0.1').searchParams
     relativePath = query.get('path')

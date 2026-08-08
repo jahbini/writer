@@ -33,7 +33,15 @@ outlineIsUsable = (outline) ->
   return false unless outline? and typeof outline is 'object'
   return false if outline.parse_error
   return false unless Array.isArray(outline.chapter_order) and outline.chapter_order.length
-  return false unless outline.cast?.protagonist_label? and outline.lens_label?
+  return false unless outline.lens_label?
+  # Protagonist can come from either cast.protagonist_label (atom-
+  # library label) OR outline.protagonist (free-form string, e.g. an
+  # unresolved_cast name promoted by story_outline's scrub). The
+  # deriveSpineFromOutline fallback already handles picking whichever
+  # is set; the gate just needs to accept both.
+  hasCastProt = typeof outline.cast?.protagonist_label is 'string' and outline.cast.protagonist_label.trim().length
+  hasTopProt  = typeof outline.protagonist is 'string' and outline.protagonist.trim().length
+  return false unless hasCastProt or hasTopProt
   true
 
 # Meta json device — returns undefined when the file's absent.
@@ -227,10 +235,12 @@ deriveSpineFromOutline = (outline, entry, priorState, lib, supplementDoc, situat
     unless outlineIsUsable outline
       msg = if outline?.parse_error
         "[story_spine] story_outline_json is a parse_error blob — fix the outline before running the chapter. Message: #{outline.message}"
-      else if not outline?.cast?.protagonist_label?
-        "[story_spine] story_outline_json missing cast.protagonist_label — outline schema is incomplete"
       else if not Array.isArray(outline?.chapter_order) or not outline.chapter_order.length
         "[story_spine] story_outline_json has no chapter_order entries"
+      else if not outline?.lens_label?
+        "[story_spine] story_outline_json missing lens_label — outline schema is incomplete"
+      else if not outline?.cast?.protagonist_label? and not (typeof outline?.protagonist is 'string' and outline.protagonist.trim().length)
+        "[story_spine] story_outline_json has no protagonist — cast.protagonist_label is null AND outline.protagonist is empty. (If the archetype-scrub nulled cast.protagonist_label, story_outline should have promoted an unresolved_cast entry to outline.protagonist; check story_outline logs.)"
       else
         "[story_spine] story_outline_json is not usable (shape check failed)"
       throw new Error msg

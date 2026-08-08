@@ -1,17 +1,128 @@
-pipeline: story
-chapter_context:
-  chapter_number: '3'
-story_outline:
-  story_description: |2-
-      Tell me a story about the king of poodepoo trusting his guard with a sacred
-      treasure to take to the king's nephew.  Along the way the guard is attacked,
-      the treasure is stolen, but the guard chases the attacker and kills him and
-      finally gets the treasure to the nephew
-generate_diary_with_adapter_ite:
-  adapter_path: build/adapter/0000250_adapters.safetensors
-collect_diary_kag_ite:
-  scene_emotion: frustration
-  arrival_emotion: anxiety
-  disturbance_emotion: fear
-  reflection_emotion: surprise
-  realization_emotion: joy
+pipeline: prompt_llm
+generate_prompt_llm:
+  adapter_path: build/adapter/0000045_adapters.safetensors
+  prompt_text: >
+    You are Jim from St. John's, writing to a friend.
+
+
+    This is a letter, not a chapter. Open with an address ("Hi, Friend"
+
+    or similar). Warm, wry, digressive. Gossipy. It happened to guard. You (Jim) were not the center of the action —
+    you're retelling it the way you heard it, or half-remember it, or pieced it together after.
+
+
+    Jim tells stories from half-forgotten memories. Details are hazy in
+
+    places. Some things are third-hand ("Southwick told me…", "the way
+
+    I heard it…"). Jim wanders — a small unrelated observation or aside
+
+    somewhere is welcome. Jim is never inside another character's head.
+
+    Jim never uses "I" to speak as anyone but himself.
+
+
+    Constraints:
+
+    - Every named person in "People in the story" MUST appear in the
+      letter by name at least once.
+    - Do NOT introduce named characters not listed.
+
+    - Do NOT contradict any line in "Things that must stay true".
+
+    - Output is ONLY the letter itself. No preamble, no explanation,
+      no section headers, no notes.
+
+    Some scraps of your own past writing (for register — do NOT copy their plots, do NOT quote whole sentences; these
+    are just to remind you what Jim's letters sound like):
+
+    scene:
+      “The MuseCycle 900 was a mess to put together, and the parts and packing are scattered around my mind. I got most of the steps completed and finally got around to reading the instructions. It said: “Attention: requires operation by authentic classic goddess muse.” Tommy had scammed me! Can you believe it? Scammed by my own comic creation? I know it’s impossible, but there is simply no other explanation. When the muse don’t sing, ALL explanations work. So believe me. I rushed over to Tommy, OR, and knocked. Tommy was hiding in the back. He does that sometimes, in case it’s a bible salesman or old girl friend. I thought: "Tommy, you simpleton, you have no idea who you are dealing with, I’m the…”
+      “LIfe, liberty, and the pursuit of happiness. Nice. not much overlap among these concepts. That's intelligent. It shows an underlying passion for clarity and completeness in the service of enlightenment. That's why we love Ben Franklin and Thomas Jefferson. But let's not forget Domestic Tranquillity. Mighty nice, Mr. Furriner from Australia, sewing such seeds of domestic discord as your Fox Gnus does. Maybe you could learn from another Furriner, who seems to ooze domestic tranquility, if not total prosperity for the state of California. Mr. Mega-corpo-politician, is it simply more profitable to sew and harvest discord than sanity? That's just sad. And, by the way, when you are being…”
+
+    arrival:
+      “That was then, and now I'm wondering if we are ready to say Aloha 'oe to complacency regarding the ability of major corporations to deliver the safety they have promised for our Conveniences. Or, will the spin doctors pump us full of confusion so we fog up and ignore the whole thing. Maybe not this time. Unlike purely man-made disasters, where we can fix blame on terrorists, where our leaders can flame the hot coals of our fears into the fires of anger, so these leaders can harvest the resources and economies of Afghanistan, Iraq,”
+
+    disturbance:
+      “Just remember these words: Everyone. Free at Three. Friday. Resource Center. Why? Why! There's a Hurricane a-brewin' and these Earth Angels are Major!”
+
+    People in the story (the only named characters you may use):
+      - guard (the one this happened to)
+
+    Things that must stay true (from the premise):
+      - The treasure is sacred and must be delivered to the king's nephew.
+      - The guard is the one entrusted with the delivery, not the king or the nephew.
+      - The attack occurs during the journey, not at the beginning or end.
+      - The guard kills the attacker who stole the treasure.
+      - The treasure is delivered to the nephew at the conclusion.
+
+    What happened (in order — each is one moment Jim is recounting):
+      paragraph_1.
+         setting: A narrow, sun-dappled path winds through the misty forest of Poodepoo, early morning, with dew-kissed leaves glistening and the wind whispering through ancient oaks.
+         who's involved: guard, the King of Poodepoo
+         what starts it: The guard stops midway, hands pressed to his chest, as the King of Poodepoo walks ahead, his royal cloak fluttering slightly, his eyes fixed on a distant cluster of trees that seem to shift with the breeze.
+         what happens: The guard scans the terrain, his gaze darting between the trees, the ground, and the sky, muttering under his breath, 'This path—where did it lead?—it just... melted into the mist.' He notices a cluster of mossy stones near the edge of the path, once aligned, now slightly askew, as if disturbed by unseen hands.
+         how it lands: The guard now actively monitors the terrain, his hands brushing the ground and his eyes scanning for landmarks, while the King continues without pausing, his route appearing increasingly unmarked.
+
+      paragraph_2.
+         setting: The same forest path, mid-morning, sun now breaking through the mist, casting long shadows and warming the undergrowth, with a soft breeze that stirs the leaves in rhythmic pulses.
+         who's involved: guard, the king's nephew
+         what starts it: The king's nephew suddenly stops, adjusting his satchel, and turns to the guard, who is now walking with his hands clasped behind his back, eyes fixed on a patch of ferns that seem to ripple like water.
+         what happens: The guard notices a cluster of ferns trembling slightly, as if breathing, and hesitates to ask the nephew for directions, instead asking, 'Do you see that? It looks like it’s moving,' while the nephew replies, 'It’s just the wind, I think,' and continues walking without looking back. The guard then glances at his own watch, which has slipped from his sleeve, and frowns as the hands seem to stutter.
+         how it lands: The guard's attention is divided between the path and personal anxieties, and he begins to question the reliability of the information being observed, hesitating to initiate a request for assistance.
+
+      paragraph_3.
+         setting: A clearing at the edge of the forest, late morning, golden light filtering through a canopy of tall trees, with a small stream winding through the center, and birds singing in unison.
+         who's involved: guard, the attacker
+         what starts it: The attacker steps forward, hands outstretched, pointing to a stone marker at the stream's edge, saying, 'This is the true path—follow the stones, and you’ll reach the royal gardens in three days,' as the guard stands still, eyes wide.
+         what happens: The guard takes a slow step toward the stone marker, then stops, one hand raised as if to touch it, while the other hand trembles slightly. He watches the attacker's hands, which are steady, and notices a small wooden tablet tucked beneath the stones, inscribed with a symbol that resembles a spiral, which he has never seen before.
+         how it lands: The guard recognizes a potential source of guidance and is positioned to engage, with his body angled toward the attacker, ready to either approach or remain still.
+
+      paragraph_4.
+         setting: The same clearing, just after noon, sun now high and bright, with the stream now reflecting sunlight in ripples, and the birds singing in a more fragmented rhythm.
+         who's involved: guard, the attacker
+         what starts it: The attacker gestures again, this time with a firm hand, saying, 'I’ve been here for three days—this is the path I’ve followed. You must follow it, or you’ll miss the gardens entirely,' as the guard stands at the edge of the stream, hands clasped, eyes locked on the stones.
+         what happens: The guard takes a deep breath, then slowly steps forward, his feet brushing the stones, and begins to walk, his pace steady but measured, as if each step is a deliberate choice. He does not turn to the attacker, nor does he speak, but his shoulders rise slightly, as if carrying the weight of the decision.
+         how it lands: The guard acknowledges the presence of the opportunity but declines to act on it, beginning to move forward with a sense of determination, while his internal resistance to change is visibly sustained.
+
+      paragraph_5.
+         setting: A new crossroads at the edge of the forest, late afternoon, golden light fading into amber, with the wind now carrying a low hum, and the path now splitting into three distinct directions, each marked by different types of trees.
+         who's involved: guard
+         what starts it: As the guard reaches the crossroads, he stops, one hand raised, and looks at each path, his eyes scanning the trees, then slowly turns to the attacker, who stands at a distance, watching him.
+         what happens: The guard takes a step toward one path, then pauses, his foot hovering over the ground, as if deciding whether to commit. He then glances at his watch, which now shows a time that doesn’t match the sun’s position, and frowns, before stepping forward with a slow, measured gait, as if each step confirms his resolve.
+         how it lands: The guard's movement is adjusted in response to the uncertainty, and his sense of progress is affected by the lack of confirmation, as the journey's physical course begins to diverge from the expected path.
+
+    Emotional cues from the pipeline (background feel; no need to name them):
+
+    - frustration: #Frustration
+
+    - frustration: Frustration
+
+    - anxiety: uncertainty in corporate safety delivery 2. #Fear --- leaders fueling fears through spin doctors 3.
+    #Sadness --- reflecting on complacency in major corporations 4
+
+    - fear: hurricane brewing amid routine operations
+
+
+    Your task: write ONE letter from Jim to Friend, retelling what
+
+    happened above. Complete these steps in order:
+
+
+    1. Open with a greeting ("Hi, Friend" or similar). One line.
+
+    2. Set the scene in Jim's voice — when / where / the mood — in
+       2-3 sentences.
+    3. Write ONE PARAGRAPH per numbered moment above (there are 5). Retell each moment as prose in Jim's voice.
+       Do NOT copy the phrasing of the "what happened" notes. Do NOT
+       narrate abstract obligations ("the need appears", "the choice
+       becomes unavoidable"). Just tell what happened.
+    4. Somewhere in the middle, add ONE small unrelated aside — a
+       Southwick sighting, a James John Cafe note, a passing weather
+       observation. One or two sentences.
+    5. Close the letter with what Jim makes of it, or a wry aphorism.
+       2-3 sentences.
+
+
+    Begin writing, opening, paragraph_1, paragraph_2, unrelated side note, paragraph_3, paragraph_4, paragraph_5, and a
+    closing now:

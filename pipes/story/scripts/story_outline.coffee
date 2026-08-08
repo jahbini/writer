@@ -317,6 +317,32 @@ UNRESOLVED_CAST RULES
 - Do NOT put atom-library characters in `unresolved_cast`. It is only
   for the description-named characters the library has no atom for.
 
+- CRITICAL — archetype keys are NEVER cast labels. The strings
+  #{archetypeKeys} name ARCHETYPES (categories) — they never name
+  characters. They may ONLY appear in `unresolved_cast[i].archetype`.
+  They MUST NOT appear in `cast.protagonist_label`,
+  `cast.antagonist_label`, `cast.witness_label`, or as the value of
+  `protagonist` at the top level.
+
+  WRONG:
+    "cast": { "protagonist_label": "executor", "antagonist_label": "adversary" }
+    "unresolved_cast": [ {"name": "the King of Poodepoo", "archetype": "authority", ...} ]
+
+  RIGHT (description names atom-library characters):
+    "cast": { "protagonist_label": "Jim", "antagonist_label": "Tommy" }
+    (no unresolved_cast — every character is already an atom)
+
+  RIGHT (description names non-atom characters):
+    "cast": { "protagonist_label": "Jim", "antagonist_label": null, "witness_label": null }
+    "unresolved_cast": [
+      {"name": "the King of Poodepoo",  "archetype": "authority",   "dramatic_relation": "commissions the delivery"},
+      {"name": "the king's nephew",     "archetype": "beneficiary", "dramatic_relation": "intended recipient"}
+    ]
+
+  If the description names NO atom-library character, set every cast
+  slot to null. Do NOT fill a slot with an archetype name to have
+  "something there."
+
 CHAPTER_DRAMATIC_AXIS RULES
 - Every chapter has its OWN axis — the whole-arc axis changes
   shape across chapters. Chapter 1 might introduce the external
@@ -370,6 +396,44 @@ Return the JSON now.
         parse_error: true
         raw: raw
         message: "story_outline could not extract a valid outline (raise llm.maxTokens if raw ended mid-object; check that chapter_order[] has 3+ chapters and required fields)"
+
+    # ── Defensive scrub: archetype keys must NEVER appear as cast
+    #    labels. The prompt says so explicitly with a WRONG/RIGHT
+    #    example, but Qwen-derivatives sometimes still fill the slots
+    #    with archetype names ("executor" / "adversary" / "beneficiary")
+    #    when the description doesn't name atom-library characters.
+    #    That leaks into the diary generator as "It happened to
+    #    executor." Null out any offender here; cast_genesis's
+    #    unresolved_cast path still works — genesis characters land
+    #    in spine.cast.supplemental with their real labels.
+    unless outline?.parse_error
+      archetypeKeySet = new Set (String(k).toLowerCase() for k of archetypes)
+      isArchetypeLabel = (v) ->
+        typeof v is 'string' and archetypeKeySet.has v.trim().toLowerCase()
+      scrubbed = []
+      if outline.cast?
+        for slot in ['protagonist_label', 'antagonist_label', 'witness_label']
+          v = outline.cast[slot]
+          if isArchetypeLabel v
+            scrubbed.push "cast.#{slot}='#{v}'"
+            outline.cast[slot] = null
+      if isArchetypeLabel outline.protagonist
+        scrubbed.push "protagonist='#{outline.protagonist}'"
+        outline.protagonist = null
+      if scrubbed.length
+        console.error "[story_outline] scrubbed archetype-as-label leak: #{scrubbed.join(', ')} — the outline LLM put archetype key(s) into cast slots. Those characters (if named in the description) belong in unresolved_cast; slots are now null."
+
+      # If scrubbing left the outline with no protagonist anywhere,
+      # promote the FIRST unresolved_cast entry to protagonist so
+      # story_spine has a named lead to work with. Without this,
+      # story_spine.outlineIsUsable rejects (no cast.protagonist_label
+      # AND no top-level protagonist) and the pipeline shuts down.
+      unless outline.protagonist? and String(outline.protagonist).trim().length
+        unresolved = outline.unresolved_cast ? []
+        first = unresolved[0]
+        if first?.name?
+          outline.protagonist = first.name
+          console.error "[story_outline] no protagonist after scrub; promoted first unresolved_cast entry ('#{first.name}') to outline.protagonist so downstream has a lead"
 
     # Stamp source hash + description for provenance. Downstream steps
     # (e3) can compare hashes to detect stale outlines when the user

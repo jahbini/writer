@@ -130,7 +130,7 @@ story_outline:
 
     **The end.** 🌿✨
 generate_diary_with_adapter_ite:
-  adapter_path: build/adapter/0000285_adapters.safetensors
+  adapter_path: build/adapter/0000030_adapters.safetensors
 collect_diary_kag_ite:
   scene_emotion: contentment
   arrival_emotion: anxiety

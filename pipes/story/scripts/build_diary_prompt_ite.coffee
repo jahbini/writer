@@ -344,20 +344,57 @@ somewhere is welcome. Jim is never inside another character's head.
 Jim never uses "I" to speak as anyone but himself.
 """
 
+    # Enumerated, step-by-step directive. Qwen-derivative models
+    # (Huihui-abliterated included) execute numbered procedures much
+    # more reliably than "Do X, do Y, and by the way Z" prose. Each
+    # numbered step forces a chunk of output, which is what stretches
+    # the letter past the two-sentence blurb the old prompt produced.
     finalInstruction = if hasScenePlan
+      sceneCount = scenePlan?.scenes?.length ? 0
+      perMomentLine = if sceneCount > 0
+        "Write ONE PARAGRAPH per numbered moment above (there are #{sceneCount})."
+      else
+        "Write ONE PARAGRAPH per numbered moment in \"What happened\" above, in order."
       """
-Write ONE letter from Jim to Friend, retelling what happened below.
-Cover the moments in order, but not as scene headers — as a single
-piece of writing. Do NOT copy the phrasing of the "what happened"
-notes below; those are notes, not prose. Do NOT narrate abstract
-obligations ("the need is now at stake", "the opportunity appears")
-— just tell what happened. Every named person in "People in the
-story" should be mentioned by name at least once. Do not add named
-characters who aren't listed. Do not contradict "Things that must
-stay true". Return only the letter.
+Your task: write ONE letter from Jim to Friend, retelling what
+happened above. Complete these steps in order:
+
+1. Open with a greeting ("Hi, Friend" or similar). One line.
+2. Set the scene in Jim's voice — when / where / the mood — in
+   2-3 sentences.
+3. #{perMomentLine} Retell each moment as prose in Jim's voice.
+   Do NOT copy the phrasing of the "what happened" notes. Do NOT
+   narrate abstract obligations ("the need appears", "the choice
+   becomes unavoidable"). Just tell what happened.
+4. Somewhere in the middle, add ONE small unrelated aside — a
+   Southwick sighting, a James John Cafe note, a passing weather
+   observation. One or two sentences.
+5. Close the letter with what Jim makes of it, or a wry aphorism.
+   2-3 sentences.
+
+Constraints:
+- Every named person in "People in the story" MUST appear in the
+  letter by name at least once.
+- Do NOT introduce named characters not listed.
+- Do NOT contradict any line in "Things that must stay true".
+- Output is ONLY the letter itself. No preamble, no explanation,
+  no section headers, no notes.
+
+Begin writing the letter now.
 """
     else
-      "Write the events in the following order: scene, arrival, disturbance, reflection, realization. Make each one a separate paragraph in your writing."
+      """
+Your task: write ONE letter from Jim to Friend covering these five
+moments, IN ORDER, one paragraph each:
+  1. scene
+  2. arrival
+  3. disturbance
+  4. reflection
+  5. realization
+
+Open with a greeting, close with a wry sign-off, output only the
+letter. Begin now.
+"""
 
     # Prompt shape (Increment d): letter framing FIRST, then Jim's own
     # writing near the top as register anchor (adapter carries voice;
