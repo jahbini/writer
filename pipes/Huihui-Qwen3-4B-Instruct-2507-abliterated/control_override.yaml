@@ -1,6 +1,6 @@
 pipeline: prompt_llm
 generate_prompt_llm:
-  adapter_path: build/adapter/0000045_adapters.safetensors
+  adapter_path: build/adapter/0000600_adapters.safetensors
   prompt_text: >
     You are Jim from St. John's, writing to a friend.
 
@@ -125,4 +125,4 @@ generate_prompt_llm:
 
 
     Begin writing, opening, paragraph_1, paragraph_2, unrelated side note, paragraph_3, paragraph_4, paragraph_5, and a
-    closing now:
+    closing row.

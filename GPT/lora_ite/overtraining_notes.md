@@ -1,87 +1,99 @@
-# LoRA overtraining — empty-generation cliff
+# LoRA overtraining — the amplitude story
 
-Session finding: 2026-08-08.
+Consolidated 2026-08-09 after a full session's investigation of the
+Aug 8 broken adapter run. Supersedes the earlier framing ("cap at
+~20 iters") which was superficial.
 
-## The pattern
+## The variable that actually matters is EFFECTIVE DISPLACEMENT
 
-On `prompt_llm` training against the current corpus + prompt shape,
-adapters trained past **~20 iters** produce empty generation. A
-20-iter adapter is usable; anything past that starts trimming the
-output, and quickly reaches the point where every generation is
-empty (or empty after cleanGeneratedText strips trailing garbage).
+Effective displacement of the LoRA delta from init is proportional
+to `learning_rate × steps × ‖gradient‖`. The failure mode we call
+"overtraining" is really "amplitude too high, wherever that comes
+from." Two dials both drive it:
 
-Non-adapter (base model) generation is unaffected — the base
-produces full letters whether the corpus was 20-iter or 200-iter
-LoRA'd, because the LoRA weights are never loaded in that path.
+- **Learning rate.** July 30 working config: `lr = 1e-5`. Aug 8
+  broken config: `lr = 2e-4`. Ratio: **20×**. Every checkpoint from
+  the Aug 8 run is unusable at every step because the delta blew
+  past the OOD-safe amplitude before checkpoint 100 was even saved.
+- **Iters.** At the small lr, the July 30 config gave usable
+  adapters up to ~20 iters and started tipping past that.
 
-## Why this happens
+Same underlying problem, two levers. When diagnosing "empty
+generation," always check the training-command's `learning_rate`
+FIRST — it's the biggest lever and the easiest to misconfigure.
 
-LoRA fine-tuning shifts two distributions simultaneously:
+## Why the damage concentrates on `<|im_end|>` emission
 
-1. **Content distribution** — which content tokens the model picks
-   given the prompt. This is what you want the adapter to learn.
-2. **Stop-emission distribution** — how eager the model is to emit
-   `<|endoftext|>` / `<|im_end|>` at a given position.
+The most consistent gradient signal in the corpus is not Jim's
+voice — it is `<|im_end|>`. Every one of 888 training rows ends
+with it. It is the one token whose correct prediction is never
+contradicted anywhere in the corpus. Style signal is diffuse and
+high-entropy; EOT signal is unanimous.
 
-Every training example ends with a stop token. At low iters, the
-adapter mostly touches (1) and barely touches (2). Past a threshold,
-the adapter starts to think "emitting a stop token IS a
-high-probability action at the start of a response" — because the
-training data's prompt→response shapes are shorter and end sooner
-than what natural generation would produce. The overtrained model
-picks stop-emission as its FIRST-token choice.
+Gradient descent with a big step size spends the adapter's tiny
+budget — rank 8, qProj/vProj only, layers 28–35 — on the steepest
+consistent direction first. At `lr = 2e-4`, even 100 steps carves
+"emit `<|im_end|>`" deeply into that low-rank subspace. At
+`lr = 1e-5`, the same direction gets learned 20× more gently. The
+delta stays small enough that the base model dominates OOD
+contexts and you get generation with voice tinting — which is
+exactly what the July 30 adapters did.
 
-Signal: on a run whose adapter is tipping, `.err` shows growing
-counts of
+## Why validation loss lied
 
-```
-[session.generate] ignored N early stop-marker(s) (adapter-quirk?):
-   [{"marker":"<|endoftext|>","atToken":1,"contentSoFar":0}, ...]
-```
+`valid.jsonl` is the same shape as `train.jsonl`: bare Jim prose
+≤ 640 tokens, ending in `<|im_end|>`. That is **in-distribution
+by construction.** On in-distribution input, the deeply-carved
+EOT direction is aligned with the correct answer, so loss looks
+healthy (measured 3.7624 on step 100 of the broken run).
 
-Watch that count grow across iter checkpoints; it inversely tracks
-generation quality.
+The damage manifests only OUT-of-distribution — real usage is
+ChatML wrap + long structured directive. There the adapter's
+features fire spuriously and the deepest-carved behavior wins:
+instant `<|im_end|>` → empty output. **Validation loss cannot
+detect this** because it never leaves the in-distribution
+manifold.
 
-## Runtime mitigations we have (partial, non-cure)
+Do not trust val loss alone for checkpoint selection. See
+[[checkpoint_selection]].
 
-`~/pipeline/mlx/session_api.coffee` — `session.generate`:
+## Signals to watch during training
 
-- `MIN_CONTENT_BEFORE_STOP = 16` — ignore stop markers until at
-  least 16 non-whitespace chars have been generated. Saves the
-  mildly-overtrained case where the adapter emits `<|endoftext|>`
-  on token 1 but would have generated real content on token 2.
-- `<|im_end|>` REMOVED from `STOP_MARKERS`. It's a Qwen chat-template
-  turn delimiter, not a true EOG. Chat-format-trained adapters emit
-  it at paragraph breaks; halting there truncated letters to their
-  first paragraph.
+- `train_loss` dropping fast + `val_loss` also dropping is not the
+  signal we thought. It only means "adapter is fitting the
+  in-distribution row shape well."
+- The absent signal — the one that would predict this failure — is
+  "does a generation probe against the real inference-time prompt
+  still produce coherent output." Loss cannot answer this. Only a
+  generation probe can. See [[checkpoint_selection]].
 
-These help with mild overtraining. They do NOT rescue a truly
-tipped-over adapter — the model has no real content to give past
-the first few tokens and just runs out its `maxTokens` on
-whitespace / trivial repetition.
+## Runtime mitigations (partial, downstream of amplitude)
 
-## What to do
+Three fixes shipped in `~/pipeline/mlx/session_api.coffee`. They
+are correct independently and necessary for any well-trained
+adapter to work with our loaders, but none of them cures an
+over-amplitude adapter. See
+[[../session_api/stop_markers_and_cache]] and
+[[../session_api/eos_shortcut_and_adapter]].
 
-1. **Cap iters at the ceiling you find.** Current empirical ceiling:
-   **≈ 20 iters** for prompt_llm on Jim's corpus.
-2. **Bracket the ceiling with checkpoints.** Train with smaller
-   `steps_per_save` so you have `_adapters.safetensors` snapshots
-   every few iters. Point the UI adapter dropdown at each in turn;
-   the one that generates full letters without empties is your
-   working point.
-3. **If you need to push past the ceiling** for more style
-   internalization: reduce learning rate (halves per-iter shift),
-   reduce LoRA rank (less capacity to memorize stop patterns), or
-   augment training data with longer response examples so the model
-   doesn't learn "responses end soon."
-4. **Validation-loss early-stop** isn't wired up in this project's
-   `train_lora` chain. Would be a good addition; watch loss on a
-   held-out sample and stop when it starts climbing.
+## The durable fix
+
+1. **Retrain at the small learning rate (1e-5).** Not superstition
+   — the correct operating point. Confirmed working July 30.
+2. **Replace loss-based checkpoint selection with a generation
+   probe.** Save-and-keep a checkpoint only if a probe generation
+   in the real ChatML+directive context produces non-empty
+   coherent output. Detail: [[checkpoint_selection]].
+3. **If hot-lr training speed is later wanted back**, the lever is
+   reducing the EOT gradient monopoly (masking or downweighting
+   the terminal token on some fraction of rows). Optimization,
+   not repair — do this AFTER a low-lr adapter is proven working.
 
 ## Cross-refs
 
-- Runtime stop-marker logic: `~/pipeline/mlx/session_api.coffee`
-  (search `MIN_CONTENT_BEFORE_STOP`, `STOP_MARKERS`).
-- Diary generator: `pipes/story/scripts/generate_diary_with_adapter_ite.coffee`
-  (uses `S.callLLM` which routes through the session.generate above).
-- Training entry points: `GPT/lora_ite/train_contract.md`.
+- Fidelity check that ruled out save/load defects: `scripts/adapter_fidelity.coffee`
+  + `test.sh`. See [[adapter_fidelity_test]].
+- Runtime plumbing fixes: [[../session_api/stop_markers_and_cache]],
+  [[../session_api/eos_shortcut_and_adapter]].
+- Diagnostic journal for this whole hunt: `SUPERVISOR.md` at repo root.
+- Training entry point: [[train_contract]].
