@@ -73,6 +73,30 @@ topology, distinct fills.
 - **Zoom + pan** for larger recipes.
 - **Panel collapsed state** in localStorage.
 
+## Sizing (updated 2026-08-10)
+
+`pipeline_svg.coffee` layout constants:
+
+- `COL_W = 110`, `ROW_H = 60`, `MARGIN_X = 40`, `MARGIN_Y = 20`.
+- Symmetric height: `height = bottom-most-y + MARGIN_Y`. No stray
+  bottom padding (there was a `+40` bottom-only pad that caused
+  visible asymmetric whitespace below the graph — removed).
+
+`ui/index.html` `.pipeline-graph-panel .pipeline-svg` CSS:
+
+- `width: 100%; height: auto; min-height: 320px;`
+- `max-height: min(65vh, 560px);`
+
+The max-height cap is load-bearing for narrow viewBoxes (one-script
+recipes). Without it, `width: 100% + preserveAspectRatio` scales a
+tall+narrow viewBox up to fill container width, blowing every
+circle up 3–5×. With the cap, tall graphs letterbox at natural
+aspect and reasonable size; wide graphs (typical multi-script
+recipes) never hit the cap and are unaffected.
+
+**Do not raise the cap without checking one-script recipe rendering.**
+Raising it re-opens the giant-circle failure mode.
+
 ## Interactions that shipped
 
 Not in the original plan but built:
