@@ -24,46 +24,47 @@ Endpoint: `POST /api/step_restart` with body `{name: "<step>"}`.
 
 **Uses the sanctioned `restart_here` protocol from
 `~/pipeline/runner/pipeline_runner.coffee` §6.** Does NOT delete
-state files. Never writes new params (existing params/<name>.yaml
-is reused verbatim — this is a "restart with what's already
-there" operation, not a re-launch).
+state files. Never writes new params — existing `params/<name>.yaml`
+is reused verbatim.
+
+**Only the target step is marked.** No upstream cascade, no
+regeneration of prior steps' params or state. Anything the target
+step needs from upstream must already be on disk from a previous
+run; if it isn't, the runner will block on that dependency and the
+operator has to resolve the upstream state themselves (typically by
+restarting the missing upstream step first, or launching the whole
+pipe from a clean state).
 
 Concrete steps the endpoint takes:
 
-1. Compute the recipe DAG (`buildDag` from runner helpers, given
-   the current pipe's recipe.yaml + override).
-2. Read the target step's `state/step-<name>.json`, set
-   `restart_here: true`, write it back. This is the runner's
-   signal on next start to re-execute this step and everything
-   downstream of it.
-3. **Selective upstream cascade.** BFS through the target's
-   `depends_on` closure. For each ancestor, check if all files
-   listed in its `makes` are present on disk. If ANY are missing,
-   mark that ancestor `restart_here: true` too.
-4. Remove `state/pipeline.json` (the "we crashed last time" gate).
+1. Validate the target step exists in `experiment.yaml`.
+2. Read `state/step-<name>.json`, set `restart_here: true`, write
+   it back. That's the runner's signal on next start to re-execute
+   this step and everything downstream of it. If no state file
+   exists yet, no write is needed — the step will run on launch.
+3. Remove `state/pipeline.json` (the "we crashed last time" gate).
    Without this, the runner refuses to start.
-5. `startRunner()` — spawns the pipe runner exactly as a normal
+4. `startRunner()` — spawns the pipe runner exactly as a normal
    launch would.
 
-Response body includes the cascade list so the UI can flash "Also
-restarting: step_a, step_b" in the status bar.
+## Why no cascade (design decision, 2026-08-10)
 
-## Why the cascade exists
+An earlier implementation cascaded upstream automatically: BFS
+through the target's `depends_on`, mark `restart_here` on any
+ancestor whose declared `makes:` files were missing on disk. The
+intent was to prevent the runner's infinite-wait when an upstream
+`done` marker existed but its output file didn't.
 
-`restart_here` on a step whose upstream `done` markers exist but
-whose upstream OUTPUT FILES do NOT exist causes an infinite wait.
-Symptom: step never starts; runner's `resolveArtifact` awaits a
-notifier for a file that already-`done` upstream will never
-regenerate.
+Operator feedback: this was confusing. It regenerated prior steps'
+state silently, and it was never obvious which steps would be
+touched by a click. The mental model "restart this step, nothing
+else" is worth more than the convenience of auto-fixing missing
+upstream files.
 
-This case is real — an operator can delete artifacts from disk
-between runs, or an old `state/` directory can be paired with a
-fresh `output/` directory. The cascade fixes it precisely: any
-ancestor whose promises can't be honored from disk gets marked to
-re-execute, so files reappear before the target waits on them.
-
-Ancestors whose files ARE present on disk are left as `done` —
-those don't need to re-run.
+Current contract: restart-this-step touches exactly one state
+file. If the runner blocks waiting on a missing upstream artifact,
+that's visible in the pipeline graph and the operator restarts
+that step next. Explicit is better than clever.
 
 ## Non-goals
 

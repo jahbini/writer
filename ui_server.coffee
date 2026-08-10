@@ -1319,23 +1319,15 @@ handleLaunch = (req, res) ->
   pipeline = String(payload.pipeline ? '').trim()
   return sendJson(res, 400, { ok: false, error: 'pipeline is required' }) unless pipeline.length
 
-  # keep_params mode: reuse the previous run's config verbatim.
-  # Skip pushing new UI values into control_override — the runner
-  # then reads unchanged config, materializes the same experiment.yaml
-  # + params/, and clearStepState() (below) blanks state/ so every
-  # step re-executes. That's the "same params, fresh state" ask.
-  keepParams = payload.keep_params is true
-
-  unless keepParams
-    writeUiControl
-      pending:
-        pipeline: pipeline
-        scene: payload.scene ? ''
-        arrival: payload.arrival ? ''
-        disturbance: payload.disturbance ? ''
-        reflection: payload.reflection ? ''
-        realization: payload.realization ? ''
-      ui_values: if payload.ui_values? and typeof payload.ui_values is 'object' then payload.ui_values else {}
+  writeUiControl
+    pending:
+      pipeline: pipeline
+      scene: payload.scene ? ''
+      arrival: payload.arrival ? ''
+      disturbance: payload.disturbance ? ''
+      reflection: payload.reflection ? ''
+      realization: payload.realization ? ''
+    ui_values: if payload.ui_values? and typeof payload.ui_values is 'object' then payload.ui_values else {}
 
   if payload.continuous is true
     repeatLoop.enabled = true
@@ -1346,18 +1338,12 @@ handleLaunch = (req, res) ->
       continuous_delay_seconds: repeatLoop.delay_seconds
   else
     stopRepeatLoop()
-  override = null
-  unless keepParams
-    overrideText = if typeof payload.control_override_text is 'string' and payload.control_override_text.trim().length
-      payload.control_override_text
-    else
-      dumpYaml buildOverrideObject(payload)
-    writeUiControl control_override_text: overrideText
-    override = writeControlOverrideText overrideText
+  overrideText = if typeof payload.control_override_text is 'string' and payload.control_override_text.trim().length
+    payload.control_override_text
   else
-    # Read the existing control_override.yaml so the response payload
-    # can still report what pipeline is about to run.
-    override = readControlOverride()
+    dumpYaml buildOverrideObject(payload)
+  writeUiControl control_override_text: overrideText
+  override = writeControlOverrideText overrideText
   attachedRun = findActiveWorkspaceRun()
   if attachedRun?
     writeUiRunPatch
@@ -1711,20 +1697,19 @@ server = http.createServer (req, res) ->
       params_error: paramsErr
       params_path: path.relative(CWD, paramsFile)
   if url is '/api/step_restart' and req.method is 'POST'
-    # Sanctioned restart via the runner's `restart_here` protocol
+    # Restart via the runner's `restart_here` protocol
     # (pipeline_runner.coffee §6). Set restart_here=true on the
-    # target step's existing state file — the runner picks that up
-    # at startup, deletes state for that step + every DOWNSTREAM
-    # step, clears the flag, and runs. Upstream state stays intact;
-    # control_override and params/ are untouched.
-    #
-    # SELECTIVE UPSTREAM CASCADE: the runner's `resolveArtifact`
-    # infinite-waits when a done upstream step's output file is
-    # missing from disk (producer done → won't re-run; memo empty →
-    # await notifier never fires). To break that, we also set
-    # restart_here on ANY transitive dependency whose declared output
-    # target file is absent from disk. Steps whose outputs are all
-    # present stay done.
+    # target step's state file — the runner picks that up at
+    # startup, deletes state for that step + every DOWNSTREAM step,
+    # clears the flag, and runs. **ONLY the target step is marked.**
+    # Upstream state, params, and control_override are left exactly
+    # as-is. If an upstream step's declared output file is missing
+    # on disk the runner may block waiting for it — that's the
+    # operator's problem to resolve (delete its state, then trigger
+    # a full launch, or restart that upstream step directly). We
+    # deliberately do NOT cascade upstream: previous auto-cascade
+    # behavior led to confusion about which prior steps got
+    # regenerated silently.
     bodyText = await readRequestBody req
     payload = {}
     try payload = JSON.parse(bodyText ? '{}') catch
@@ -1741,11 +1726,7 @@ server = http.createServer (req, res) ->
         pid: attachedRun.pid
         note: "a runner is already alive; restart_here NOT set (would race with the running pipeline). Kill the run first, then retry."
 
-    # Load the merged experiment (recipe + overrides + control) so we
-    # can walk depends_on and check each step's `makes:` artifact
-    # target files. Read from disk; the experiment.yaml is the last
-    # run's materialized effective config, which is what the runner
-    # will read again next launch.
+    # Load experiment.yaml only to validate the target step exists.
     experimentPath = path.join(CWD, 'experiment.yaml')
     unless fs.existsSync experimentPath
       return sendJson res, 400, { ok: false, error: "no experiment.yaml — run the pipeline once before using restart" }
@@ -1756,73 +1737,28 @@ server = http.createServer (req, res) ->
       return sendJson res, 500, { ok: false, error: "cannot parse experiment.yaml: #{err?.message ? err}" }
 
     RESERVED = ['run', 'artifacts', 'pipeline']
-    steps = {}
+    hasStep = false
     for own k, v of experiment when k not in RESERVED and v? and typeof v is 'object' and v.run?
-      steps[k] = v
-    artifacts = experiment?.artifacts ? {}
-    return sendJson(res, 404, { ok: false, error: "step '#{name}' not found in experiment.yaml" }) unless steps[name]?
+      hasStep = true if k is name
+    return sendJson(res, 404, { ok: false, error: "step '#{name}' not found in experiment.yaml" }) unless hasStep
 
-    # For a step, are all its `makes:` targets present on disk?
-    stepOutputsPresent = (stepName) ->
-      makes = steps[stepName]?.makes ? []
-      return true if makes.length is 0     # nothing to produce → satisfied
-      for artKey in makes
-        target = artifacts[artKey]?.target
-        continue unless typeof target is 'string' and target.length
-        full = path.join CWD, target
-        return false unless fs.existsSync full
-      true
+    # Mark ONLY the target step with restart_here=true.
+    marked = false
+    stateFile = path.join(CWD, 'state', "step-#{name}.json")
+    if fs.existsSync stateFile
+      try
+        st = JSON.parse fs.readFileSync(stateFile, 'utf8')
+      catch err
+        return sendJson res, 500, { ok: false, error: "cannot read #{path.relative(CWD, stateFile)}: #{err?.message ? err}" }
+      st.restart_here = true
+      st.updated_at = new Date().toISOString()
+      fs.writeFileSync stateFile, JSON.stringify(st, null, 2), 'utf8'
+      marked = true
+    # If no state file, the step is already unmarked in the runner's
+    # eyes and will run on launch — no write needed.
 
-    # Selective cascade: BFS upstream from `name`, adding to the
-    # `toRestart` set any ancestor that has at least one missing
-    # output. Ancestors whose outputs are all on disk stay done.
-    toRestart = new Set([name])
-    missingOutputs = {}   # stepName → [target paths] for the response
-    frontier = [name]
-    seen = new Set([name])
-    while frontier.length
-      cur = frontier.shift()
-      for dep in (steps[cur]?.depends_on ? [])
-        continue if seen.has(dep)
-        seen.add dep
-        continue unless steps[dep]?    # skip 'never' / undefined
-        unless stepOutputsPresent(dep)
-          toRestart.add dep
-          missingOutputs[dep] = (
-            for artKey in (steps[dep].makes ? [])
-              target = artifacts[artKey]?.target
-              continue unless typeof target is 'string' and target.length
-              full = path.join CWD, target
-              path.relative(CWD, full) unless fs.existsSync full
-          ).filter (t) -> t?
-          # Only recurse when this dep is being restarted — its own
-          # ancestors then need the same test (its outputs will be
-          # re-derived). If it's staying done, its ancestors are
-          # implicitly fine (memo reads their outputs via meta).
-          frontier.push dep
-
-    # Mark each step in toRestart with restart_here=true.
-    markedList = []
-    unmarkedList = []
-    for step in Array.from(toRestart)
-      stateFile = path.join(CWD, 'state', "step-#{step}.json")
-      if fs.existsSync stateFile
-        try
-          st = JSON.parse fs.readFileSync(stateFile, 'utf8')
-        catch err
-          return sendJson res, 500, { ok: false, error: "cannot read #{path.relative(CWD, stateFile)}: #{err?.message ? err}" }
-        st.restart_here = true
-        st.updated_at = new Date().toISOString()
-        fs.writeFileSync stateFile, JSON.stringify(st, null, 2), 'utf8'
-        markedList.push step
-      else
-        # No state file yet — the step is already "unmarked" in the
-        # runner's eyes and will run on launch. No write needed.
-        unmarkedList.push step
-
-    # pipeline.json is the sacred "we crashed last time" gate — its
-    # presence causes the runner to exit at startup. Remove it so
-    # this restart can actually start.
+    # pipeline.json is the "we crashed last time" gate — its presence
+    # causes the runner to exit at startup. Remove so restart can run.
     pipelinePath = path.join(CWD, 'pipeline.json')
     removedPipelineJson = false
     if fs.existsSync pipelinePath
@@ -1834,10 +1770,8 @@ server = http.createServer (req, res) ->
     return sendJson res, 200,
       ok: true
       name: name
-      restart_here_marked: markedList          # steps whose state files got restart_here=true
-      already_unmarked: unmarkedList           # steps with no state file (will run on launch)
-      cascaded_upstream: Object.keys(missingOutputs)
-      missing_outputs: missingOutputs          # per step: which target files were missing
+      restart_here_marked: (if marked then [name] else [])
+      already_unmarked: (if marked then [] else [name])
       removed_pipeline_json: removedPipelineJson
       pid: launch.pid
       hh_mm: launch.hh_mm

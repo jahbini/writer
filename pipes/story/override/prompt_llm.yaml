@@ -1,5 +1,5 @@
 pipeline: prompt_llm
 generate_prompt_llm:
   llm:
-    maxTokens: 1000
+    maxTokens: 2000
     temperature: 0.9

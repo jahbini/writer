@@ -78,8 +78,8 @@ topology, distinct fills.
 Not in the original plan but built:
 
 - Step-detail modal + Restart This Step button — see
-  `GPT/ui/step_restart.md`.
-- Selective upstream cascade for restart — see same.
+  `GPT/ui/step_restart.md`. **Target-only contract**: exactly one
+  state file is touched per click; no upstream cascade.
 - Modal-freeze guard — mentioned above.
 
 ## Guardrails

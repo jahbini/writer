@@ -133,10 +133,10 @@ layout = (graph) ->
   # Assign coordinates. Tighter than the old boxes-and-notes layout —
   # circles are small and their labels only show on hover, so we can
   # pack rows closer.
-  COL_W = 100
-  ROW_H = 42
+  COL_W = 110
+  ROW_H = 60
   MARGIN_X = 40
-  MARGIN_Y = 40
+  MARGIN_Y = 20
   positions = {}
   maxRow = 0
   for r in ranks
@@ -151,12 +151,12 @@ layout = (graph) ->
       positions[n] = {x, y}
 
   width  = MARGIN_X * 2 + (ranks[ranks.length - 1] - ranks[0]) * COL_W + 80
-  height = MARGIN_Y * 2 + maxRow * ROW_H + 40
   # Shift all y so the topmost node sits at MARGIN_Y.
   minY = Math.min (p.y for _, p of positions)...
   for _, p of positions
     p.y += MARGIN_Y - minY
-  height = Math.max height, (Math.max (p.y for _, p of positions)...) + MARGIN_Y + 40
+  # Height = actual bottom of content + MARGIN_Y (symmetric with top).
+  height = (Math.max (p.y for _, p of positions)...) + MARGIN_Y
 
   {positions, width, height, ranks, columns}
 

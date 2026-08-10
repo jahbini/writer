@@ -62,16 +62,21 @@
       width: 100%;
       overflow-x: auto;
     }
-    /* SVG has viewBox="0 0 2160 820" width="100%", so browser scales
-       internal units by (container_px / 2160). At a 1400px container
-       the scale is ~0.65: internal font-size 24 renders as ~15.6 visual
-       px, matching UI body copy weight. Bump to ~26 for the node
-       labels so they're clearly readable at the same visual size. */
+    /* SVG has viewBox="0 0 W H" width="100%", so browser scales internal
+       units by (container_px / W). A wide multi-script viewBox (e.g. 2160×820)
+       gives ~0.65 scale on a 1400px container — internal font-size 24 renders
+       as ~15.6 visual px.
+       max-height caps the tall+narrow case (one-script recipe with several
+       stacked artifacts, viewBox e.g. 300×800). Without a cap, width:100%
+       + preserveAspectRatio scales height to 100%×(H/W), blowing circles up
+       3–5×. With the cap, tall graphs letterbox to natural aspect at a
+       humane size; wide graphs are unaffected (they never hit the cap). */
     .pipeline-graph-panel .pipeline-svg {
       font-size: 24px;
       width: 100%;
       height: auto;
       min-height: 320px;
+      max-height: min(65vh, 560px);
     }
     .pipeline-graph-panel .pipeline-svg .node-label {
       font-size: 26px;
@@ -561,14 +566,6 @@
               </label>
               <button id="launch-button" type="button">Write Override And Run</button>
               <button id="kill-button" type="button">Kill Run</button>
-              <label class="checkbox-row" style="margin-top:6px;">
-                <input type="checkbox" id="keep-params-checkbox">
-                <span>Keep existing params &amp; control_override (blank state only)</span>
-              </label>
-              <div class="hint" style="margin-top:2px;">
-                Off (default): push current UI values into control_override, then run.<br>
-                On: leave last run's config alone; just blank state so every step re-executes with the same params.
-              </div>
               <div id="launch-result" class="hint mono"></div>
             </div>
 
@@ -1275,23 +1272,13 @@
         //   restart_here_marked: state files that got restart_here=true
         //   already_unmarked:    steps with no state file (will run anyway)
         //   cascaded_upstream:   ancestors added because their outputs
-        //                        were missing on disk (the infinite-wait
-        //                        fix — see /api/step_restart in ui_server)
-        //   missing_outputs:     per-cascaded-step, which target files
-        //                        were missing (diagnostic only)
+        //   already_unmarked:    step had no state file yet; will run on
+        //                        launch without needing a flag
         const marked = (data.restart_here_marked || []).join(', ') || '(none)';
-        const cascaded = data.cascaded_upstream || [];
-        const cascadeLine = cascaded.length
-          ? `cascaded upstream: ${cascaded.join(', ')} (their output files were missing on disk — see console for detail)`
-          : 'no upstream cascade needed';
         statusEl.innerHTML =
           `restarted ${name} — runner pid ${data.pid}<br>` +
-          `restart_here set on: ${marked}<br>` +
-          cascadeLine +
+          `restart_here set on: ${marked}` +
           (data.removed_pipeline_json ? '<br>removed pipeline.json' : '');
-        if (cascaded.length) {
-          console.debug('[step-restart] cascaded upstream (missing outputs):', data.missing_outputs);
-        }
         // Close so the graph can pick up the transitions. The
         // modal-close fires refresh(), and the runner will flip
         // each restarted step from done → pending → running.
@@ -1360,8 +1347,7 @@
           pipeline: byId('pipeline-select').value,
           ui_values: collectUiValues(),
           continuous: byId('continuous-checkbox').checked,
-          continuous_delay_seconds: Number(byId('continuous-delay-select').value || 60),
-          keep_params: !!byId('keep-params-checkbox')?.checked
+          continuous_delay_seconds: Number(byId('continuous-delay-select').value || 60)
         };
         const res = await fetch('/api/launch', {
           method: 'POST',
