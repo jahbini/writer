@@ -6,7 +6,7 @@ story_outline:
     and Southwick comes crashing down on a couple eating their lunch.  Make his fall from the ceiling spectacular and
     the couple reacts in shock
 generate_diary_with_adapter_ite:
-  adapter_path: build/adapter/0000150_adapters.safetensors
+  adapter_path: build/adapter/0000100_adapters.safetensors
 collect_diary_kag_ite:
   scene_emotion: contentment
   arrival_emotion: anxiety

@@ -1,0 +1,67 @@
+# =====================================================================
+#   simplify.yaml  —  generate simple-English paraphrases for KAG chunks
+# =====================================================================
+#   Pairs Jim-style originals with plain-English rewrites, one per
+#   (story_id, chunk_index) row in kag_entries. Produced pairs land
+#   in the `chunk_simplifications` sqlite table (managed by the
+#   pipeline's sqlite meta) and are consumed at LoRA-training time
+#   as supervised style-transfer data.
+#
+#   The HF router model is set once, in the pipe's
+#   `params/_global.yaml:hfchat_default_model` — DO NOT pin a model
+#   here. The provider policy suffix (`:fastest` / `:cheapest` /
+#   named provider) lives in the same place. See meta/hfchat
+#   contract in the pipeline repo.
+#
+#   Auth: expects HF_TOKEN in env at run time. Missing token →
+#   step throws at first write.
+
+run:
+  output_dir: out
+  data_dir: data
+  # The HF router model + provider policy suffix. This is the single
+  # source of truth read by meta/hfchat when a request struct omits
+  # `model`. Change the suffix (`:fastest` / `:cheapest` / named
+  # provider) here to shift spend/latency without touching step code.
+  hfchat_default_model: meta-llama/Llama-3.3-70B-Instruct:cheapest
+
+  # Resource ledger config — OPTIONAL. Omit this whole `resources:`
+  # block and simplify_chunks_ite runs without admission control
+  # (backward-compat path). See GPT/resource_ledger.md.
+  resources:
+    hf-api:
+      limits:
+        concurrent: 2
+        memory_mb: 2048
+      windowed: {}
+      wallclock_seconds_seed: 8
+  owners:
+    pipeline: 4
+  default_owner: pipeline
+  hfchat_default_memory_mb: 256
+
+artifacts:
+  # Source-only artifact: read directly from the sqlite meta layer.
+  # The .jsonl suffix routes to the `chunkSimplificationsMissing`
+  # sqlite REQUEST (returns [{story_id, chunk_index, title, story_text}, ...]
+  # for chunks with kag_entries rows but no chunk_simplifications row).
+  chunk_simplifications_missing:
+    source: chunkSimplificationsMissing.jsonl
+  simplify_report:
+    target: out/simplify_report.json
+
+simplify_chunks_ite:
+  run: simplify_chunks_ite.coffee
+  depends_on: []
+  needs:
+    - chunk_simplifications_missing
+  makes:
+    - simplify_report
+  # How many chunks to process per invocation. The step is
+  # idempotent — a re-run picks up whatever remains. Small default
+  # keeps HF spend predictable; raise for a marathon run.
+  batch_size: 25
+  # Override the system prompt if you want a different flavor of
+  # "simple." Default lives in the step; leaving this unset uses it.
+  # system_prompt: |
+  #   ...
