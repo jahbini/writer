@@ -77,6 +77,23 @@ oracle_ask_sqlite:
     Start your output now.
 
   batch_size: 4
+
+  # Second pass on the same base quantized model: rewrite each chunk
+  # in plain English (no Jim voice). Persisted per (story, chunk) via
+  # chunkSimplification{sid|idx}.json → chunk_simplifications table.
+  # Consumed by build_lora_pairs_ite to form (plain → jim) training
+  # pairs. Set to `null`/omit to disable (oracle runs unchanged).
+  # `true` uses the shipped DEFAULT_REWRITE_PROMPT; a string is used
+  # verbatim (must contain the `{{{STORY}}}` placeholder).
+  rewrite_prompt_text: true
+
+  # Rewrite has its own generation budget — oracle's maxTokens is
+  # sized for short keyword output and truncates a chunk-length
+  # rewrite mid-sentence. 512 tokens fits ~2000 chars of plain
+  # prose, comfortably longer than any 5-chunk group.
+  rewrite_llm:
+    maxTokens: 512
+
   llm:
     maxTokens: 80
     # max-kv-size dropped: the LLM door caps session KV via mx.setCacheLimit

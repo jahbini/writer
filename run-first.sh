@@ -65,11 +65,11 @@ cd ../..
 echo
 echo "Done. Four things to try next:"
 echo
-echo "  pnpm run model -- Qwen/Qwen3-4B-Instruct-2507"
-echo "      # activates the download_model recipe to fetch + quantize"
-echo "      # a HuggingFace model into build/model and build/model4."
-echo "      # The recipe runs through the pipeline, not via raw HF cli"
-echo "      # — the quantized output is self-contained and offline-usable."
+echo "  export MODELS=\$HOME/models"
+echo "      # shared model cache root. Each pipe's override.yaml pins"
+echo "      # download_dir / quantized_dir under \$MODELS/<org>/<name>[-mlx4]/."
+echo "      # Models load as steps in the pipe's recipe — no separate"
+echo "      # bootstrap command; first run of a pipe fetches + quantizes."
 echo
 echo "  cd pipes/sample && npx pipeline"
 echo "      # run the sample pipe end-to-end (test pipeline, no model needed)"

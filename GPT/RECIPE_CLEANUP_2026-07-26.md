@@ -71,9 +71,12 @@ date — so "oldest" means legacy-generation, not filesystem age.)
    both plain and RAG generation via a single toggle.
 
 ### Keepers (reviewed, deliberately kept)
-- **`download_model`** — grandfathered. `npm run model` (`bin/model.sh`) writes
-  `pipeline: download_model`; `reset` also inlines the same two model scripts.
-  Live entry point, just non-`_ite` named.
+- **`download_model`** — grandfathered. `reset` inlines the same two
+  model scripts (`download_model` + `quantize_model`) so the model
+  is loaded as part of a pipe's normal recipe chain; the shipped
+  `download_model` recipe is the standalone form. Live entry point,
+  just non-`_ite` named. (`bin/model.sh` shell wrapper removed
+  2026-08-19 — models load via recipe steps now.)
 - **`test`** — kept as a worked example for future pipeline users.
 - **`reembed_clean`** — live one-time RAG re-embed (writes
   `build/chunk_embeddings_clean.jsonl`). NOT renamed (suffixes are transitional).

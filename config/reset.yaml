@@ -15,18 +15,20 @@
 #     4. seed_story_sqlite — ingest markdown stories from data/*.md into
 #        the sqlite stories table.
 #
-#   After a green run, the pipe has:
-#     - build/model/          (raw HF download; can be rm -rf'd)
-#     - build/model4/         (self-contained quantized MLX; downstream
-#                              recipes reference this)
+#   After a green run, the shared $MODELS cache has:
+#     - $MODELS/<org>/<name>/          raw HF download; can be rm -rf'd
+#     - $MODELS/<org>/<name>-mlx4/     quantized MLX; downstream recipes
+#                                      reference this
+#   And the pipe has:
 #     - runtime.sqlite:stories populated + zero KAG rows (oracle will
 #                              start over on next oracle_ite run)
 #
 #   Project overrides:
 #     - Change `stories_md.source` if your markdown lives elsewhere.
 #     - Change `run.model` if you're bootstrapping a different HF repo.
-#     - Set `download_model.download_dir` / `quantize_model.src_dir` /
-#       `quantized_dir` to move the on-disk layout.
+#     - Per-pipe override.yaml sets download_dir / src_dir /
+#       quantized_dir explicitly under $MODELS. See
+#       pipes/*/override.yaml for the pattern.
 #
 #   No other recipe `include:`s base_ite, so these steps don't bleed
 #   into diary_ite / oracle_ite / lora_ite / eval_ite runs.
@@ -40,6 +42,10 @@ run:
   output_dir: out
   data_dir: data
   training_dir: build/train
+  # loraLand: the raw (non-quantized) model dir that lora_ite trains
+  # against. Fallback for pipes that don't pin it explicitly; per-pipe
+  # override.yaml should set it to match download_model.download_dir
+  # (typically ${MODELS}/<org>/<name>/).
   loraLand: build/model
   debug_s: false
   debug_mlx: false
@@ -62,15 +68,16 @@ download_model:
   depends_on: [reset_base_environment_ite]
   needs: []
   makes: []
-  download_dir: build/model
+  # download_dir intentionally omitted — set in per-pipe override.yaml
+  # (or leave unset and the script derives $MODELS/<org>/<name>/).
 
 quantize_model:
   run: model/quantize_model.coffee
   depends_on: [download_model]
   needs: []
   makes: []
-  src_dir: build/model
-  quantized_dir: build/model4
+  # src_dir / quantized_dir intentionally omitted — set in per-pipe
+  # override.yaml. Convention: $MODELS/<org>/<name>[-mlx<bits>]/.
   q_bits: 4
 
 seed_story_sqlite:

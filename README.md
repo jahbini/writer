@@ -61,17 +61,19 @@ A typical session:
 # 1. Bootstrap once.
 ./run-first.sh
 
-# 2. Get a model into shared build/ (one-time, ~5 min for a 4B model).
-npm run model -- Qwen/Qwen3-4B-Instruct-2507
+# 2. Set MODELS to the shared model cache root.
+export MODELS=$HOME/models
 
 # 3. Spin up an application.
 npm run pipe:new diary_experiment diary_ite
 # (creates pipes/diary_experiment/override.yaml with pipeline: diary_ite)
 
-# 4. Run it.
+# 4. Set the pipe's model + paths in pipes/diary_experiment/override.yaml
+#    (see "Model paths" below), then run it — first run downloads +
+#    quantizes into $MODELS; subsequent runs are idempotent-skipped.
 cd pipes/diary_experiment && npx pipeline
 
-# 5. Spin up another, in parallel — uses the same model & venv.
+# 5. Spin up another, in parallel — different model, same $MODELS cache.
 cd ../..
 npm run pipe:new lora_experiment lora_ite
 cd pipes/lora_experiment && npx pipeline
@@ -82,61 +84,36 @@ Each pipe accumulates its own `state/`, `logs/`, `out/`, `runtime.sqlite`
 the one thing worth committing per pipe, alongside any pipe-specific
 scripts you write.
 
-## How `npm run model` actually works
+## Model paths ($MODELS shared cache)
 
-`npm run model -- <org/name>` is a thin shell wrapper. It writes
-`override.yaml` at the project root selecting `pipeline: download_model`
-and then runs `npx pipeline`. The actual work happens inside the
-runner's shipped `download_model` recipe (two steps:
-`download_model` → `quantize_model`).
-
-The recipe-based approach matters because:
-
-1. **No HF-cache surprises.** A raw `huggingface-cli download` can
-   leave the local directory holding cache symlinks that need network
-   to resolve later. The recipe's `quantize_model` step runs
-   `mlx_lm.convert`, which produces a self-contained MLX directory
-   (`build/model4`) with real weight files — load it offline forever.
-2. **Customizable via override.yaml.** Open the generated
-   `override.yaml` after the wrapper writes it; tweak `q_bits`,
-   `download_dir`, `quantized_dir`, or set `skip_quantize: true` if
-   you want the raw download only.
-3. **Restartable.** If the download is interrupted, `restart_here`
-   works just like for any other pipeline step.
-
-If you'd rather skip the wrapper, do the same thing by hand:
-
-```sh
-cat > override.yaml <<EOF
-pipeline: download_model
-download_model:
-  model: Qwen/Qwen3-4B-Instruct-2507
-EOF
-npx pipeline
-```
-
-Any existing project-root `override.yaml` gets backed up to
-`override.yaml.YYYY-MM-DD_HH-MM-SS.bak` before the wrapper replaces
-it. Per-pipe override files under `pipes/*/` are untouched.
-
-## Using the shared model in a pipe
-
-Pipes are working dirs *under* the project root. Inside
-`pipes/<name>/override.yaml`, a relative path to the quantized
-model looks like:
+Models are loaded as steps inside a pipe's recipe (there is no
+separate `npm run model` bootstrap). Set `MODELS` in your shell to
+the shared cache root; each pipe's `override.yaml` pins its
+download + quantize paths under it:
 
 ```yaml
-pipeline: diary_ite
+pipeline: story
 
-# In an _ite recipe, the quantized model is typically referenced
-# via the `quantized_model_dir` param. Make it relative to the
-# pipe's CWD (which is pipes/<name>/).
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+
+# Layout: $MODELS/<org>/<name>[-mlx<bits>]/
+download_model:
+  download_dir: ${MODELS}/Qwen/Qwen3-4B-Instruct-2507
+
 quantize_model:
-  quantized_model_dir: ../../build/model4
+  src_dir:       ${MODELS}/Qwen/Qwen3-4B-Instruct-2507
+  quantized_dir: ${MODELS}/Qwen/Qwen3-4B-Instruct-2507-mlx4
 ```
 
-The `../../` walks up out of `pipes/<name>/` to the project root,
-then into `build/model4/`. Every pipe sees the same model.
+Multiple pipes using different base models coexist in one `$MODELS`
+tree. Both `download_model` and `quantize_model` are idempotent:
+once the weights are present and match the recorded provenance,
+subsequent runs skip.
+
+Downstream steps that need the quantized model reference
+`quantized_dir` via their own params (typically
+`quantized_model_dir`) — again pinned in the pipe's override.yaml.
 
 ## Project-owned UI is yours to hack
 

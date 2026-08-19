@@ -1,26 +1,23 @@
 Step: `download_model`
-Recipes:
-- `base_ite` (PROJECT `config/base_ite.yaml`, restored 2026-05-27 with the
-  proven 4-step writeStory chain)
-- `download_model` (PROJECT `config/download_model.yaml`, the recipe
-  `npm run model` selects)
+Recipes: `reset` (PROJECT `config/reset.yaml`) and the shipped
+`download_model` (package `config/download_model.yaml`). The step
+runs as part of a pipe's normal recipe chain — there is no separate
+bootstrap command.
 
-Both project recipes shadow the package via `resolveConfigPath`
-(`BASE/config` wins over `EXEC/config`). DO NOT use the package's
-`download_model.yaml` — its `model/download_model.coffee` is HuggingFace
-API + Python and has hit `401 Unauthorized` on the trainer.
-
-Run script: `story/hf_download.coffee` (resolves from `BASE/scripts/story/`).
-Uses **git + git-lfs** only; no HF CLI, no Python, no API tokens.
+Run script: `model/download_model.coffee` (shipped in the pipeline
+package). Uses **git + git-lfs** only; no HF CLI, no Python, no API
+tokens.
 
 Inputs (params):
 - `model` — HF repo id, e.g. `Qwen/Qwen3-4B-Instruct-2507`. Pulled from
   the step's `model` param if set, else `run.model`.
-- `loraLand` — target directory where the model is cloned.
-  - In `download_model.yaml` (invoked at project root by `npm run model`):
-    `build/model` → `BASE/build/model`.
-  - In `base_ite.yaml` (invoked inside a pipe): `../../build/model` →
-    `BASE/build/model` (the shared model location every pipe references).
+- `download_dir` — target directory where the model is cloned. Pin
+  it in the pipe's `override.yaml` using the shared cache layout:
+    `${MODELS}/<org>/<name>/`
+  When omitted, the script derives that same path from `$MODELS` +
+  `model`. Legacy fallback: `build/model` (used when `$MODELS`
+  unset). `loraLand` is still accepted as an alias for backward
+  compatibility.
 
 Outputs:
 - Directory at `loraLand` containing the cloned model (`config.json`,
@@ -43,25 +40,15 @@ Host prerequisites:
   initialized (`git lfs install` once per user).
 
 Downstream consumers:
-- `quantize_model` reads `source_model_dir: build/model` (or
-  `../../build/model`) and writes the MLX 4-bit quantized model to
-  `build/model4` (or `../../build/model4`).
-- `lora_ite` reads `run.loraLand` as the base model for training.
-
-Why this exists separately from the package's `model/download_model.coffee`:
-- avoids HuggingFace API auth (no `HF_TOKEN`, no `huggingface-cli login`).
-- avoids Python and the `mlx_lm.convert` cache-symlink behavior the
-  package recipe relies on.
-- preserves the original writeStory provenance + retry policy.
+- `quantize_model` reads its own `src_dir` (pinned to the same
+  `${MODELS}/<org>/<name>/` in the pipe's override.yaml) and writes
+  MLX 4-bit weights to `${MODELS}/<org>/<name>-mlx4/`.
+- `lora_ite` reads the raw download path as the base model for training.
 
 Known pitfalls:
-- If invoked at the project root (e.g. via `npm run model`), `model.sh`
-  writes a `BASE/override.yaml` selecting `pipeline: download_model`. That
-  file is a transient driver, not a per-recipe override; per `README.md`
-  pipe-recipes must not read `BASE/override.yaml`.
 - If `git-lfs` is missing, the safetensors files are LFS pointer stubs;
   downstream `quantize_model` will fail with "source model invalid".
-- `build/model` (the raw clone, ~16 GB for a 4B model) is required by
-  `lora_ite` (which trains against the raw model, not `build/model4`).
-  Do not `rm -rf build/model` after quantization if LoRA training is on
-  the table.
+- The raw clone (~16 GB for a 4B model) is required by `lora_ite`
+  (which trains against the raw model, not the quantized derivative).
+  Do not `rm -rf ${MODELS}/<org>/<name>/` after quantization if LoRA
+  training is on the table.

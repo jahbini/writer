@@ -102,10 +102,11 @@ rendering client might send.
 `pipes/story/override/spystory.yaml` gained two blocks:
 
 - `run.model: huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated`
-  — swaps the base model at deep-merge time. The `build/model` and
-  `build/model4` artifacts must be re-prepared for this repo before
-  generation runs; the human drives that (see `bin/model.sh` or
-  the `reset` recipe). Do NOT auto-run.
+  — swaps the base model at deep-merge time. The corresponding
+  `${MODELS}/<org>/<name>/` and `-mlx4/` directories must exist
+  before generation runs; the human drives that via the pipe's
+  normal recipe chain (`reset` runs `download_model` +
+  `quantize_model` as steps). Do NOT auto-run.
 - `state_extractor.llm.maxTokens: 6000` — doubled from the effective
   `3000` recorded in the pre-change `pipes/story/experiment.yaml`.
   Last run's `chapter_state.json` showed
