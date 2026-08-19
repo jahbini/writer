@@ -26,6 +26,14 @@ artifacts:
     target: out/lora_remaining_count.json
   selected_story_ids:
     target: out/selected_story_ids.json
+  # Chat-formatted (plain → jim) rows emitted by build_lora_pairs_ite,
+  # consumed by run_lora_train_ite as the mlx-lm jsonl input.
+  train_rows:
+    target: build/train/train.jsonl
+  valid_rows:
+    target: build/train/valid.jsonl
+  test_rows:
+    target: build/train/test.jsonl
   lora_stdout:
     target: out/lora_train.txt
   lora_run_record:
