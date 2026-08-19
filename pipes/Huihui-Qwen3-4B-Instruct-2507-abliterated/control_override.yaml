@@ -1,0 +1,14 @@
+pipeline: spystory
+story_outline:
+  story_description: >-
+    Roger was drinking and crashed his car into the St. John's bridge.  A local drug addict told Roger he would clean
+    everything up for $50.  Roger was so drunk he paid the money.  The drug addict just waited until Roger walked away
+    and he left too, without cleaning up anything.
+generate_diary_with_adapter_ite:
+  adapter_path: build/good_adapters/anoddatest
+collect_diary_kag_ite:
+  scene_emotion: contentment
+  arrival_emotion: anxiety
+  disturbance_emotion: frustration
+  reflection_emotion: playful
+  realization_emotion: wry

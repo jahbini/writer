@@ -54,7 +54,6 @@ params/
 state/
 pipeline.json
 experiment.yaml
-override.yaml
 *-wal
 *-shm
 pipes/sample

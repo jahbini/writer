@@ -25,7 +25,8 @@ compare_adapters_ite:
   depends_on: []
   needs: []
   makes: [adapter_comparison]
-  quantized_model_dir: build/model4
+  # quantized_model_dir: pin per-pipe as
+  # `compare_adapters_ite.quantized_model_dir: ${MODELS}/<org>/<name>-mlx4`.
   eval_spec_path: '{BASE}/eval/heldout_prompts.json'
   # The adapters to rank. `adapter_path: null` = base model (no adapter).
   # Paths are relative to the pipe CWD. Set this per comparison — for the

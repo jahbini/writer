@@ -42,11 +42,12 @@ run:
   output_dir: out
   data_dir: data
   training_dir: build/train
-  # loraLand: the raw (non-quantized) model dir that lora_ite trains
-  # against. Fallback for pipes that don't pin it explicitly; per-pipe
-  # override.yaml should set it to match download_model.download_dir
-  # (typically ${MODELS}/<org>/<name>/).
-  loraLand: build/model
+  # loraLand intentionally not set here — must be pinned in each
+  # pipe's override.yaml as `run.loraLand: ${MODELS}/<org>/<name>/`
+  # (matches download_model.download_dir for that pipe). No global
+  # fallback because there is no valid pipe-agnostic value; a stale
+  # `build/model` default silently masked the missing override for
+  # months.
   debug_s: false
   debug_mlx: false
   debug_sql: false

@@ -1,0 +1,11 @@
+# =====================================================================
+#   pipes/story/override.yaml — activation only
+# =====================================================================
+#   The story recipe (with story_spine) lives at ~/writer/config/story.yaml
+#   and shadows anything runner-bundled. Recipe-level tuning goes there;
+#   this file just picks the pipeline.
+#
+#   Deep-merge additions to individual steps still work here (per-step
+#   knobs), but new-step definitions belong in the recipe.
+
+pipeline: story

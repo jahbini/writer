@@ -1,10 +1,9 @@
 # =====================================================================
-#   oracle_ite.yaml  —  iterative KAG-via-oracle ingestion pipeline
+#   oracle_ite.yaml — PIPE-LOCAL for Huihui-Qwen3-4B-Instruct-2507-abliterated
 # =====================================================================
-#   For each new story without KAG entries, prompts the oracle model
-#   to extract emotional keywords + headlines and stores them as
-#   queryable rows. Retries failed stories with backoff via the
-#   `oracleFailureFor{...}` sqlite request key.
+#   Shadows ~/writer/config/oracle_ite.yaml. Same KAG-ingestion +
+#   plain-English rewrite pipeline, with model_dir + loraLand pinned
+#   to $MODELS/huihui-ai/... for this pipe.
 
 run:
   # `run.model` intentionally not set here — the model identity is a
@@ -13,8 +12,7 @@ run:
   output_dir: out
   data_dir: data
   training_dir: build/train
-  # loraLand: raw model dir — pin in per-pipe override.yaml as
-  # `run.loraLand: ${MODELS}/<org>/<name>/`. No global default.
+  loraLand: ${MODELS}/huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated
 
 artifacts:
   new_story_ids:
@@ -31,8 +29,7 @@ oracle_ask_sqlite:
   depends_on: []
   needs: []
   makes: [new_story_ids, oracle_remaining_count, kag_rejects, kag_viewed]
-  # model_dir: pin per-pipe as
-  # `oracle_ask_sqlite.model_dir: ${MODELS}/<org>/<name>-mlx4`.
+  model_dir: ${MODELS}/huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated-mlx4
   # Block scalar is `>` (folded). Tried `|` (literal) on 2026-08-06
   # thinking it'd help the model — the model got WORSE (bare keywords
   # only, no headlines, identical output every group). Folded works

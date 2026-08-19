@@ -17,7 +17,7 @@ run:
   output_dir: out
   data_dir: data
   training_dir: build/train
-  loraLand: build/model
+  # loraLand: pin per-pipe as `run.loraLand: ${MODELS}/<org>/<name>/`
   debug_s: false
   debug_mlx: false
   debug_sql: false
@@ -35,7 +35,8 @@ generate_prompt_llm:
   depends_on: []
   needs: []
   makes: [prompt_generate_raw, prompt_generate_meta, prompt_generate_text]
-  quantized_model_dir: build/model4
+  # quantized_model_dir: pin per-pipe as
+  # `generate_prompt_llm.quantized_model_dir: ${MODELS}/<org>/<name>-mlx4`.
   # Adapter picker (UI dropdown). Lists build/adapter* dirs + a base option;
   # defaults to build/adapter. Pick base / i100 / i200 / i300 in the UI without
   # editing yaml. Empty value ('(base)') = no adapter.

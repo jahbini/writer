@@ -18,5 +18,6 @@ reembed_chunks_clean:
   depends_on: []
   needs: []
   makes: []
-  quantized_model_dir: build/model4
+  # quantized_model_dir: pin per-pipe as
+  # `reembed_chunks_clean.quantized_model_dir: ${MODELS}/<org>/<name>-mlx4`.
   clean_embeddings_file: build/chunk_embeddings_clean.jsonl
