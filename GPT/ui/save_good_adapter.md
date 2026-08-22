@@ -1,3 +1,5 @@
+<!-- 2026-08-22: model paths under $MODELS supersede any `build/model[4]` mentions below. See ~/pipeline/GPT/model_paths.md for the current convention. -->
+
 # Save Good Adapter — preserve winning LoRA checkpoints
 
 Shipped 2026-08-10. Green "Save Good Adapter" button next to

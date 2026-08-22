@@ -1,3 +1,5 @@
+<!-- 2026-08-22: model paths under $MODELS supersede any `build/model[4]` mentions below. See ~/pipeline/GPT/model_paths.md for the current convention. -->
+
 # Reading `pipes/diary/logs/` — trainer eras & failure modes
 
 Scan reference for `pipes/<pipe>/logs/pipe_HH_MM.log` (+ sibling `.err`).

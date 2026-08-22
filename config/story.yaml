@@ -1,18 +1,10 @@
 # =====================================================================
-#   story.yaml  —  diary_ite evolved to output a chapter (Phase 1)
+#   story.yaml — project-shared, pinned via ${MODELS}/${run.model} — universal
 # =====================================================================
-#   Copy of the shipped diary_ite recipe with one new step inserted:
-#   `story_spine` — a structural planner that reads story_parts + a
-#   handful of atom selections and emits story_spine_json, a strict
-#   JSON plan a future prose stage can expand into a chapter.
-#
-#   Phase 1: story_spine is a sidecar (nothing downstream consumes it
-#   yet). The diary generation branch continues to run unchanged.
-#   Phase 2 will wire story_spine_json into build_diary_prompt_ite.
-#
-#   Lives at <BASE>/config/story.yaml — shadows any runner-bundled
-#   config/story.yaml at <EXEC>/config/. Activated by
-#   pipes/story/override.yaml (`pipeline: story`).
+#   Promoted from pipes/Huihui-.../config/ on 2026-08-22 so both the
+#   Huihui and story pipes inherit the pins via the resolver's BASE
+#   tier. If a future pipe uses a different base model, give it its
+#   own pipes/<pipe>/config/story.yaml (CWD-tier shadow, wins over BASE).
 
 run:
   # `run.model` intentionally not set here — the model identity is a
@@ -22,7 +14,7 @@ run:
   output_dir: out
   data_dir: data
   training_dir: build/train
-  # loraLand: pin per-pipe as `run.loraLand: ${MODELS}/<org>/<name>/`
+  loraLand: ${MODELS}/${run.model}
   debug_s: false
   debug_mlx: false
   debug_sql: false
@@ -109,8 +101,7 @@ story_outline:
   # with 3-6 chapters, each with inherited/ending state and a
   # concrete next_chapter_trigger.
   story_description: [ UI_textarea, "" ]
-  # quantized_model_dir: pin per-pipe under this step in override.yaml
-  # as `${MODELS}/<org>/<name>-mlx4`.
+  quantized_model_dir: ${MODELS}/${run.model}-mlx4
   llm:
     # Whole-story outline is verbose: 3-6 chapters × ~14 fields each,
     # plus 6-10 questions and obligations. 5000 leaves headroom.
@@ -145,8 +136,7 @@ story_beats:
   depends_on: [story_spine]
   needs: [story_spine_json]
   makes: [story_beats_json]
-  # quantized_model_dir: pin per-pipe under this step in override.yaml
-  # as `${MODELS}/<org>/<name>-mlx4`.
+  quantized_model_dir: ${MODELS}/${run.model}-mlx4
   llm:
     # Actual beats output was ~4.5KB at maxTokens 3000 — trim.
     maxTokens: 2000
@@ -171,8 +161,7 @@ scene_planner:
   depends_on: [story_beats]
   needs: [story_beats_json]
   makes: [scene_plan_json]
-  # quantized_model_dir: pin per-pipe under this step in override.yaml
-  # as `${MODELS}/<org>/<name>-mlx4`.
+  quantized_model_dir: ${MODELS}/${run.model}-mlx4
   llm:
     # After dropping the standalone `candidates` array (2026-08-01
     # revision) the schema is roughly half its previous size. 3000
@@ -225,8 +214,7 @@ generate_diary_with_adapter_ite:
   # Adapter picker (UI dropdown). Lists build/adapter* dirs + checkpoints + a
   # base option; defaults to build/adapter. Empty value ('(base)') = no adapter.
   adapter_path: [ UI_dropdown, adapters, build/adapter ]
-  # quantized_model_dir: pin per-pipe under this step in override.yaml
-  # as `${MODELS}/<org>/<name>-mlx4`.
+  quantized_model_dir: ${MODELS}/${run.model}-mlx4
   llm:
     maxTokens: 2000
     temperature: 0.7
@@ -236,8 +224,7 @@ generate_diary_without_adapter_ite:
   depends_on: [build_diary_prompt_ite]
   needs: [story_parts, diary_prompt_text]
   makes: [diary_base_raw, diary_base_meta, diary_base_text]
-  # quantized_model_dir: pin per-pipe under this step in override.yaml
-  # as `${MODELS}/<org>/<name>-mlx4`.
+  quantized_model_dir: ${MODELS}/${run.model}-mlx4
   llm:
     maxTokens: 2000
     temperature: 0.7
@@ -268,8 +255,7 @@ state_extractor:
   depends_on: [generate_diary_with_adapter_ite, chapter_context]
   needs: [diary_adapted_text, story_outline_json, chapter_context]
   makes: [chapter_state_json]
-  # quantized_model_dir: pin per-pipe under this step in override.yaml
-  # as `${MODELS}/<org>/<name>-mlx4`.
+  quantized_model_dir: ${MODELS}/${run.model}-mlx4
   llm:
     # Output is compact (arrays of short strings) but the prompt
     # embeds the full chapter text — leave headroom.

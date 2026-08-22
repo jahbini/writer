@@ -1,3 +1,5 @@
+<!-- 2026-08-22: model paths under $MODELS supersede any `build/model[4]` mentions below. See ~/pipeline/GPT/model_paths.md for the current convention. -->
+
 Step: `download_model`
 Recipes: `reset` (PROJECT `config/reset.yaml`) and the shipped
 `download_model` (package `config/download_model.yaml`). The step

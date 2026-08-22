@@ -1,3 +1,5 @@
+<!-- 2026-08-22: model paths under $MODELS supersede any `build/model[4]` mentions below. See ~/pipeline/GPT/model_paths.md for the current convention. -->
+
 Step: `compare_adapters_ite`  (writediary project step + recipe)
 Recipe: `compare_adapters_ite`  (config/compare_adapters_ite.yaml, shadows package)
 
