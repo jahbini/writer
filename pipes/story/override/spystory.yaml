@@ -16,12 +16,10 @@ story_spine:
   needs: [story_outline_json, chapter_context, cast_supplement]
 
 # ── Model swap ────────────────────────────────────────────────────
-# Human drives model prep — do NOT auto-run download/reset. The
-# build/model{,4} artifacts prepared from the stock Qwen id must be
-# re-prepared for this repo before spystory generation will work
-# (see GPT/story/spystory.md).
-run:
-  model: huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated
+# Model identity lives in the pipe's main override.yaml (run.model).
+# Do NOT re-declare it here — a duplicate is how the 2026-08-23
+# `Huihui-ai/Qwen3-4B-...` typo silently swapped chat_llm to a
+# non-existent path. See GPT/model_paths.md + recipe_lifecycle.md.
 
 # ── state_extractor budget ────────────────────────────────────────
 # Doubled from the effective 3000 → 6000. Last run showed
