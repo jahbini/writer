@@ -596,20 +596,32 @@ resolveConfigPath = (name) ->
     return p if fs.existsSync(p)
   path.join(EXEC_ROOT, 'config', "#{name}.yaml")
 
-# Discover the selectable recipes from the actual config/ dirs (project BASE
-# ∪ package EXEC), instead of a hardcoded list that drifts from reality. Any
-# <name>.yaml in either config/ is offered; BASE shadows EXEC for content.
-discoverRecipes = ->
-  names = new Set()
-  for root in [BASE, EXEC_ROOT]
+# Enumerate every pipeline recipe visible in the UI dropdown by scanning
+# three tiers in precedence order:
+#   pipe    - <CWD>/config/*.yaml    (pipe-local, highest priority)
+#   project - <BASE>/config/*.yaml   (project-shared)
+#   shipped - <EXEC_ROOT>/config/*.yaml (bundled with @jahbini/pipeline)
+# Matches `resolveConfigPath`'s CWD > BASE > EXEC precedence. When a
+# recipe name exists in multiple tiers, the highest-priority source wins.
+#
+# `discoverPipelines()` returns [{name, source}]. The UI uses `source`
+# to italicize non-shipped entries so the human can see at a glance
+# which are local overlays. `discoverRecipes()` remains for callers
+# that only need the string list.
+discoverPipelines = ->
+  bySource = {}
+  for [source, root] in [['pipe', CWD], ['project', BASE], ['shipped', EXEC_ROOT]]
     dir = path.join(root, 'config')
     continue unless fs.existsSync(dir)
     try
       for f in fs.readdirSync(dir) when f.endsWith('.yaml')
-        names.add f.slice(0, -('.yaml'.length))
+        name = f.slice(0, -('.yaml'.length))
+        bySource[name] ?= source   # first writer wins → precedence order
     catch
       null
-  Array.from(names).sort()
+  ({name, source: bySource[name]} for name in Object.keys(bySource).sort())
+
+discoverRecipes = -> p.name for p in discoverPipelines()
 
 readRecipe = (pipeline) ->
   return {} unless typeof pipeline is 'string' and pipeline.length
@@ -818,6 +830,9 @@ buildControls = ->
     # Discovered from config/ (project BASE ∪ package EXEC) — every recipe that
     # actually exists is selectable; no hardcoded list to drift out of sync.
     pipelines: discoverRecipes()
+    # Enriched form: [{name, source}] with source ∈
+    # {'pipe','project','shipped'}. UI italicizes non-shipped entries.
+    pipelines_enriched: discoverPipelines()
     scene_options: makeOptions 'scenes'
     arrival_options: makeOptions 'characters'
     disturbance_options: makeOptions 'disturbances'

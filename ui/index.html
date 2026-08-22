@@ -35,24 +35,6 @@
     h1, h2 { margin: 0 0 12px; }
     h1 { font-size: 34px; letter-spacing: 0.02em; }
     h2 { font-size: 16px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-    .grid {
-      display: grid;
-      grid-template-columns: 1.2fr 1fr;
-      gap: 16px;
-      align-items: start;
-    }
-    .column {
-      display: grid;
-      gap: 16px;
-      align-content: start;
-    }
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 16px;
-      box-shadow: 0 4px 18px rgba(43, 45, 40, 0.06);
-    }
     /* Pipeline Graph panel: full-width above the two-column grid.
        Larger font than the SVG's built-in 12px baseline. */
     .pipeline-graph-panel {
@@ -81,6 +63,24 @@
     .pipeline-graph-panel .pipeline-svg .node-label {
       font-size: 26px;
       font-weight: 500;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .column {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 4px 18px rgba(43, 45, 40, 0.06);
     }
     .hero {
       display: flex;
@@ -507,6 +507,51 @@
           <div id="log-files" class="files"></div>
         </section>
 
+        <section class="panel" data-default-collapsed="1">
+          <h2>Run History</h2>
+          <div id="run-history-meta" class="hint mono"></div>
+          <table class="steps">
+            <thead>
+              <tr><th>started</th><th>pipeline</th><th>status</th><th>run_id</th></tr>
+            </thead>
+            <tbody id="run-history-body"></tbody>
+          </table>
+          <div id="run-detail" class="hint mono" style="margin-top:8px; white-space:pre-wrap;"></div>
+        </section>
+
+        <section class="panel" data-default-collapsed="1">
+          <h2>Stories</h2>
+          <div id="sqlite-stories-meta" class="hint mono"></div>
+          <table class="steps">
+            <thead>
+              <tr><th>story_id</th><th>title</th></tr>
+            </thead>
+            <tbody id="sqlite-stories-body"></tbody>
+          </table>
+        </section>
+
+        <section class="panel" data-default-collapsed="1">
+          <h2>Training Runs</h2>
+          <div id="sqlite-training-runs-meta" class="hint mono"></div>
+          <table class="steps">
+            <thead>
+              <tr><th>started</th><th>run_id</th><th>train rows</th><th>status</th></tr>
+            </thead>
+            <tbody id="sqlite-training-runs-body"></tbody>
+          </table>
+        </section>
+
+        <section class="panel" data-default-collapsed="1">
+          <h2>Story Usage (LoRA)</h2>
+          <div id="sqlite-usage-meta" class="hint mono"></div>
+          <table class="steps">
+            <thead>
+              <tr><th>story_id</th><th>use_count</th><th>last_used</th></tr>
+            </thead>
+            <tbody id="sqlite-usage-body"></tbody>
+          </table>
+        </section>
+
         <section class="panel">
           <h2>Steps</h2>
           <table class="steps">
@@ -742,7 +787,10 @@
 
     function renderControls(controls) {
       const pipelineSelect = byId('pipeline-select');
-      const pipelines = controls?.pipelines || [];
+      // Enriched form: [{name, source}]. Falls back to string array
+      // when talking to an older server that only sends `pipelines`.
+      const enriched = controls?.pipelines_enriched
+        || (controls?.pipelines || []).map((name) => ({ name, source: 'shipped' }));
       const selectedPipeline = controls?.pipeline || '';
       const uiFields = controls?.ui_fields || [];
       const uiTarget = byId('ui-fields');
@@ -751,9 +799,14 @@
         return;
       }
 
-      pipelineSelect.innerHTML = pipelines.map((name) => `
-        <option value="${name}" ${name === selectedPipeline ? 'selected' : ''}>${name}</option>
-      `).join('');
+      // Italic + a small tag on non-shipped recipes so a human can see
+      // at a glance which are project overrides / pipe-local additions.
+      pipelineSelect.innerHTML = enriched.map(({ name, source }) => {
+        const isLocal = source !== 'shipped';
+        const style = isLocal ? ' style="font-style:italic"' : '';
+        const suffix = source === 'pipe' ? ' • pipe' : source === 'project' ? ' • project' : '';
+        return `<option value="${name}"${style} ${name === selectedPipeline ? 'selected' : ''}>${name}${suffix}</option>`;
+      }).join('');
       uiTarget.innerHTML = uiFields.map((field) => {
         if (field.type === 'checkbox') {
           return `
@@ -950,6 +1003,185 @@
       `).join('');
     }
 
+    // === SQLite observability panels (agent surface step 1) =============
+    // Each panel issues one /api/sqlite/<request-key> GET. The endpoint
+    // dispatches through the same `meta/sqlite.coffee` REQUESTS map that
+    // pipeline steps use, so the panels can't drift from what steps see.
+    // Failures show empty + a one-line hint; no panel ever throws.
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => (
+        { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]
+      ));
+    }
+
+    async function fetchSqliteRequest(requestKey) {
+      const url = '/api/sqlite/' + encodeURIComponent(requestKey);
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok || !data.ok) return { ok: false, error: data.error || `http ${res.status}` };
+        return { ok: true, value: data.value };
+      } catch (err) {
+        return { ok: false, error: String(err.message || err) };
+      }
+    }
+
+    const SQLITE_PANEL_LIMIT = 20;
+
+    let currentRunDetailId = null;
+
+    function renderRunDetail(payload) {
+      const el = byId('run-detail');
+      if (!payload || !payload.ok) {
+        el.textContent = payload?.error ? `error: ${payload.error}` : '';
+        return;
+      }
+      const r = payload.run;
+      const elapsed = (() => {
+        if (!r.started_at) return '';
+        const start = Date.parse(r.started_at);
+        const end = r.finished_at ? Date.parse(r.finished_at) : Date.now();
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return '';
+        return `${((end - start) / 1000).toFixed(1)}s`;
+      })();
+      const arts = r.artifacts_written || [];
+      const rowsAdded = r.sqlite_rows_added || {};
+      const rowsLines = Object.entries(rowsAdded).map(([table, val]) => {
+        if (val === null) return `  ${table}: (no timestamp — see step 5 diff)`;
+        const ids = (val.ids || []).slice(0, 5);
+        const more = (val.ids || []).length > ids.length ? `, +${val.ids.length - ids.length} more` : '';
+        return `  ${table}: ${val.count}${ids.length ? `  [${ids.map((i) => String(i).slice(0,12) + '…').join(', ')}${more}]` : ''}`;
+      }).join('\n');
+      el.textContent = [
+        `run_id      : ${r.run_id}`,
+        `pipeline    : ${r.pipeline || ''}`,
+        `status      : ${r.status || ''}${elapsed ? `   elapsed=${elapsed}` : ''}`,
+        `started_at  : ${r.started_at || ''}`,
+        `finished_at : ${r.finished_at || '(still running)'}`,
+        `logdir      : ${r.logdir || ''}`,
+        `pid         : ${r.pid || ''}`,
+        r.shutdown ? `shutdown    : ${JSON.stringify(r.shutdown)}` : '',
+        '',
+        `artifacts_written (${arts.length}):`,
+        ...arts.slice(0, 20).map((a) => `  ${a.path}  (${a.size}B, ${a.mtime})`),
+        arts.length > 20 ? `  …and ${arts.length - 20} more` : '',
+        '',
+        'sqlite_rows_added:',
+        rowsLines,
+        '',
+        '── stderr tail ────────────────────────',
+        r.err_tail || '(empty)',
+        '',
+        '── stdout tail ────────────────────────',
+        r.log_tail || '(empty)',
+      ].filter((s) => s !== '').join('\n');
+    }
+
+    async function loadRunDetail(runId) {
+      currentRunDetailId = runId;
+      byId('run-detail').textContent = `loading ${runId}…`;
+      try {
+        const res = await fetch(`/api/run/${encodeURIComponent(runId)}`, { cache: 'no-store' });
+        const data = await res.json();
+        renderRunDetail(data);
+      } catch (err) {
+        renderRunDetail({ ok: false, error: String(err.message || err) });
+      }
+    }
+
+    async function refreshSqlitePanels() {
+      // Run History (the agent-surface step-3 panel: lists rows, click for /api/run/{id})
+      const history = await fetchSqliteRequest('runHistory.jsonl');
+      const hBody = byId('run-history-body');
+      const hMeta = byId('run-history-meta');
+      if (!history.ok || !Array.isArray(history.value)) {
+        hBody.innerHTML = '';
+        hMeta.textContent = history.ok ? '(no rows — runs table empty until first launch with new runner)' : `error: ${history.error}`;
+      } else {
+        const rows = history.value;
+        const head = rows.slice(0, SQLITE_PANEL_LIMIT);
+        hMeta.textContent = `${rows.length} total${rows.length > head.length ? ` (showing newest ${head.length})` : ''}`;
+        hBody.innerHTML = head.map((row) => `
+          <tr data-run-id="${escapeHtml(row.run_id)}" style="cursor:pointer">
+            <td class="mono">${escapeHtml(formatLocalTime(row.started_at || ''))}</td>
+            <td class="mono">${escapeHtml(row.pipeline ?? '')}</td>
+            <td>${escapeHtml(row.status ?? '')}</td>
+            <td class="mono">${escapeHtml((row.run_id || '').slice(0, 8))}…</td>
+          </tr>
+        `).join('');
+        // Re-bind click handlers (innerHTML wipes them).
+        for (const tr of hBody.querySelectorAll('tr[data-run-id]')) {
+          tr.addEventListener('click', () => loadRunDetail(tr.dataset.runId));
+        }
+        // If a run is currently being inspected, refresh its detail too.
+        if (currentRunDetailId) loadRunDetail(currentRunDetailId).catch(console.error);
+      }
+
+      // Stories
+      const stories = await fetchSqliteRequest('allStories.jsonl');
+      const sBody = byId('sqlite-stories-body');
+      const sMeta = byId('sqlite-stories-meta');
+      if (!stories.ok || !Array.isArray(stories.value)) {
+        sBody.innerHTML = '';
+        sMeta.textContent = stories.ok ? '(no rows)' : `error: ${stories.error}`;
+      } else {
+        const rows = stories.value;
+        const head = rows.slice(0, SQLITE_PANEL_LIMIT);
+        sMeta.textContent = `${rows.length} total${rows.length > head.length ? ` (showing first ${head.length})` : ''}`;
+        sBody.innerHTML = head.map((row) => `
+          <tr>
+            <td class="mono">${escapeHtml(row.story_id ?? '')}</td>
+            <td>${escapeHtml(row.title ?? '')}</td>
+          </tr>
+        `).join('');
+      }
+
+      // Training Runs
+      const runs = await fetchSqliteRequest('loraTrainingRuns.jsonl');
+      const rBody = byId('sqlite-training-runs-body');
+      const rMeta = byId('sqlite-training-runs-meta');
+      if (!runs.ok || !Array.isArray(runs.value)) {
+        rBody.innerHTML = '';
+        rMeta.textContent = runs.ok ? '(no rows)' : `error: ${runs.error}`;
+      } else {
+        // Show newest first; the meta layer typically orders by started_at DESC,
+        // but defensively sort here so the panel is consistent regardless.
+        const rows = runs.value.slice().sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')));
+        const head = rows.slice(0, SQLITE_PANEL_LIMIT);
+        rMeta.textContent = `${rows.length} total${rows.length > head.length ? ` (showing newest ${head.length})` : ''}`;
+        rBody.innerHTML = head.map((row) => `
+          <tr>
+            <td class="mono">${escapeHtml(formatLocalTime(row.started_at || ''))}</td>
+            <td class="mono">${escapeHtml(row.run_id ?? '')}</td>
+            <td class="mono">${escapeHtml(row.train_rows_count ?? '')}</td>
+            <td>${escapeHtml(row.status ?? '')}</td>
+          </tr>
+        `).join('');
+      }
+
+      // Story Usage (LoRA)
+      const usage = await fetchSqliteRequest('loraStoryUsage.jsonl');
+      const uBody = byId('sqlite-usage-body');
+      const uMeta = byId('sqlite-usage-meta');
+      if (!usage.ok || !Array.isArray(usage.value)) {
+        uBody.innerHTML = '';
+        uMeta.textContent = usage.ok ? '(no rows)' : `error: ${usage.error}`;
+      } else {
+        // Highest use_count first — most-trained stories surface at the top.
+        const rows = usage.value.slice().sort((a, b) => Number(b.use_count || 0) - Number(a.use_count || 0));
+        const head = rows.slice(0, SQLITE_PANEL_LIMIT);
+        const totalUsed = rows.filter((r) => Number(r.use_count || 0) > 0).length;
+        uMeta.textContent = `${rows.length} tracked, ${totalUsed} trained${rows.length > head.length ? ` (showing top ${head.length})` : ''}`;
+        uBody.innerHTML = head.map((row) => `
+          <tr>
+            <td class="mono">${escapeHtml(row.story_id ?? '')}</td>
+            <td class="mono">${escapeHtml(row.use_count ?? 0)}</td>
+            <td class="mono">${escapeHtml(formatLocalTime(row.last_trained_at || ''))}</td>
+          </tr>
+        `).join('');
+      }
+    }
+
     function renderKillButton(run) {
       const button = byId('kill-button');
       const pid = run?.pid;
@@ -1017,15 +1249,15 @@
         mergePid: mergeRun.pid || null
       });
       byId('subtitle').textContent = `${pipe.current || ''}  ${run.pipeline || ''}  ${run.hh_mm || ''}  ${run.logdir || ''}`.trim();
-      // "Pipeline Monitor for <project-dir> (<pipe>)". The parenthesized
-      // pipe is omitted entirely when no pipe is active (e.g. the UI is
-      // running at the project root), so the title degrades to
-      // "Pipeline Monitor for <project-dir>".
-      const titleBase = pipe.base_dir || '';
-      const titlePipe = pipe.current ? ` (${pipe.current})` : '';
-      const titleStr = `Pipeline Monitor for ${titleBase}${titlePipe}`.trim();
-      byId('page-title').textContent = titleStr;
-      document.title = titleStr;
+      // Page title: "Pipeline Monitor for <project> (<pipe>)" so the human
+      // sees at a glance which BASE and which active pipe they're driving.
+      const ws = data.workspace || {};
+      const wsTop = ws.top_level || '';
+      const wsPipe = ws.pipe || '';
+      byId('page-title').textContent =
+        'Pipeline Monitor' +
+        (wsTop ? ' for ' + wsTop : '') +
+        (wsPipe ? ' (' + wsPipe + ')' : '');
       const status = run.status || 'unknown';
       const mergeStatus = mergeRun.status || '';
       // Poll while EITHER the pipeline OR a merge is active. Without the
@@ -1074,6 +1306,9 @@
       byId('latest-log').textContent = data.latest_log || '';
       byId('latest-err').textContent = data.latest_err || '';
       refreshPipelineGraph(data.steps, data.out_files).catch(console.error);
+      // SQLite panels fire once per refresh tick. They're independent of the
+      // /api/status payload — each issues its own request-keyed query.
+      refreshSqlitePanels().catch((err) => console.error('[sqlite-panels]', err));
     }
 
     // Pipeline Graph — fetch the current pipe's experiment.yaml as an
@@ -1489,7 +1724,7 @@
         'Save the current pipe\'s adapter as a good adapter.\n' +
         'Give it a memorable name (letters, digits, _, -):'
       );
-      if (name === null) return;                     // user cancelled
+      if (name === null) return;
       const trimmed = String(name).trim();
       if (!trimmed) { result.textContent = 'save cancelled (empty name)'; return; }
       result.textContent = `saving as "${trimmed}"…`;
