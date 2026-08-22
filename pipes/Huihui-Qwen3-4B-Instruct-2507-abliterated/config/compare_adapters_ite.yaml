@@ -1,0 +1,37 @@
+# =====================================================================
+#   compare_adapters_ite.yaml — PIPE-LOCAL for Huihui-Qwen3-4B-Instruct-2507-abliterated
+# =====================================================================
+#   Shadows ~/writer/config/compare_adapters_ite.yaml. Ranks a list of
+#   adapters on the frozen held-out prompt set with deterministic
+#   sampling (temperature 0). One step, no training.
+#
+#   Adapters stay pipe-local under build/adapter*/. Model is pinned
+#   to $MODELS.
+run:
+  output_dir: out
+  data_dir: data
+
+artifacts:
+  adapter_comparison:
+    target: eval_out/adapter_comparison.json
+
+compare_adapters_ite:
+  run: eval_ite/compare_adapters_ite.coffee
+  depends_on: []
+  needs: []
+  makes: [adapter_comparison]
+  quantized_model_dir: ${MODELS}/huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated-mlx4
+  eval_spec_path: '{BASE}/eval/heldout_prompts.json'
+  # The adapters to rank. `adapter_path: null` = base model (no adapter).
+  # Paths are relative to the pipe CWD. Edit the list per comparison —
+  # e.g., adapter checkpoints from a training run + the current adapter
+  # + base for a full picture.
+  compare_adapters:
+    - label: base
+      adapter_path: null
+    - label: current_adapter
+      adapter_path: build/adapter
+    - label: checkpoint_400
+      adapter_path: build/adapter/0000400_adapters.safetensors
+    - label: checkpoint_500
+      adapter_path: build/adapter/0000500_adapters.safetensors

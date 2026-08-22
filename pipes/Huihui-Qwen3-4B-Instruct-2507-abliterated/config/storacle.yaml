@@ -1,0 +1,40 @@
+# =====================================================================
+#   storacle.yaml — PIPE-LOCAL for Huihui-Qwen3-4B-Instruct-2507-abliterated
+# =====================================================================
+#   Shadows ~/writer/config/storacle.yaml. Single-LLM-call harness
+#   for prompt exploration against the KAG oracle model.
+#
+#   Pinned to $MODELS for this pipe's quantized base model.
+
+run:
+  output_dir: out
+  data_dir: data
+  loraLand: ${MODELS}/huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated
+  debug_s: false
+  debug_llm: false
+
+artifacts:
+  storacle_raw:
+    target: out/storacle_raw.txt
+  storacle_meta:
+    target: out/storacle_meta.json
+  storacle_text:
+    target: out/storacle.txt
+
+storacle:
+  run: storacle/storacle.coffee
+  depends_on: []
+  needs: []
+  makes: [storacle_raw, storacle_meta, storacle_text]
+  quantized_model_dir: ${MODELS}/huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated-mlx4
+  # Story picker: dropdown of every story in the pipe's runtime.sqlite.
+  # See ui_server.coffee's `db/story_titles` dropdown source handler.
+  story_id: [ UI_dropdown, db/story_titles, "" ]
+  # Prompt template. MUST contain the literal placeholder `{{{STORY}}}`
+  # exactly as three-brace-STORY-three-brace — the step splits on that
+  # marker and joins with the chosen story's text.
+  prompt_text: [ UI_textarea, "" ]
+  llm:
+    maxTokens: 400
+    temperature: 0.2
+    topP: 0.9
