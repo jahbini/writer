@@ -53,15 +53,11 @@ run:
   model: $MODEL
 EOF
 
-# Recipe-scoped human override — higher precedence than legacy
-# override.yaml. run.model duplicated on purpose (see comment in
-# ui_server.coffee handleCreatePipe).
+# Recipe-scoped override stub — pipeline: only, NO run.model. Removes
+# the readOverride lazy-materialize race when the UI restarts on this
+# pipe. See ui_server.coffee handleCreatePipe for full rationale.
 cat > "$PIPE_DIR/override/$PIPELINE.yaml" <<EOF
-# pipes/$NAME/override/$PIPELINE.yaml — created by bin/pipe-new.sh
 pipeline: $PIPELINE
-
-run:
-  model: $MODEL
 EOF
 
 cat > "$PIPE_DIR/README.md" <<EOF

@@ -1519,24 +1519,23 @@ handleCreatePipe = (req, res) ->
     """
     fs.writeFileSync path.join(pipeDir, 'override.yaml'), overrideText + '\n', 'utf8'
 
-    # Also seed the recipe-scoped human override (higher-priority tier
-    # the UI writes to via /api/human_override). Without run.model
-    # here, a UI edit to this file can shadow the legacy override.yaml
-    # and downstream steps re-see the "missing model" fault.
+    # Pre-create the recipe-scoped override with ONLY `pipeline:` so
+    # readOverride() has no work to do on the new UI's first /api/status.
+    # Deliberately NOT writing run.model here — model identity stays in
+    # legacy override.yaml alone (see GPT/model_identity.md warning
+    # about duplicating model in recipe-scoped overrides). The runner's
+    # deep-merge still delivers run.model to experiment.run because
+    # legacy override.yaml is always re-read.
+    #
+    # Rationale: the switch_pipe restart takes a moment. If anything
+    # (browser reload, first launch click) races with the UI coming
+    # back up before readOverride has lazily materialized this file,
+    # the new UI can end up with an empty human_override_text. Writing
+    # it here removes the race.
     humanOverrideDir  = path.join(pipeDir, 'override')
     humanOverridePath = path.join(humanOverrideDir, "#{pipelineName}.yaml")
-    humanOverrideText = """
-      # pipes/#{name}/override/#{pipelineName}.yaml — created by /api/create_pipe
-      # Recipe-scoped human override (higher precedence than legacy
-      # override.yaml). run.model duplicated here on purpose — see
-      # GPT/model_identity.md.
-      pipeline: #{pipelineName}
-
-      run:
-        model: #{model}
-    """
     fs.mkdirSync humanOverrideDir, { recursive: true }
-    fs.writeFileSync humanOverridePath, humanOverrideText + '\n', 'utf8'
+    fs.writeFileSync humanOverridePath, "pipeline: #{pipelineName}\n", 'utf8'
 
     readmeText = """
       # #{name}
