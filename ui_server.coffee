@@ -1519,6 +1519,25 @@ handleCreatePipe = (req, res) ->
     """
     fs.writeFileSync path.join(pipeDir, 'override.yaml'), overrideText + '\n', 'utf8'
 
+    # Also seed the recipe-scoped human override (higher-priority tier
+    # the UI writes to via /api/human_override). Without run.model
+    # here, a UI edit to this file can shadow the legacy override.yaml
+    # and downstream steps re-see the "missing model" fault.
+    humanOverrideDir  = path.join(pipeDir, 'override')
+    humanOverridePath = path.join(humanOverrideDir, "#{pipelineName}.yaml")
+    humanOverrideText = """
+      # pipes/#{name}/override/#{pipelineName}.yaml — created by /api/create_pipe
+      # Recipe-scoped human override (higher precedence than legacy
+      # override.yaml). run.model duplicated here on purpose — see
+      # GPT/model_identity.md.
+      pipeline: #{pipelineName}
+
+      run:
+        model: #{model}
+    """
+    fs.mkdirSync humanOverrideDir, { recursive: true }
+    fs.writeFileSync humanOverridePath, humanOverrideText + '\n', 'utf8'
+
     readmeText = """
       # #{name}
 

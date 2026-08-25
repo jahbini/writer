@@ -1,15 +1,4 @@
-pipeline: spystory
-chapter_context:
-  chapter_number: '2'
-story_outline:
-  story_description: >-
-    Roger finds out that Tommy is an international assassin.  The king pays Roger handsomely for that information and
-    puts Tommy in the dungeon tunnels under the James John cafe
-generate_diary_with_adapter_ite:
-  adapter_path: build/adapter/0000400_adapters.safetensors
-collect_diary_kag_ite:
-  scene_emotion: absurd
-  arrival_emotion: anxiety
-  disturbance_emotion: joy
-  reflection_emotion: playful
-  realization_emotion: joy
+pipeline: storacle
+storacle:
+  story_id: joes-small-claims-court-bar-and-grill-md
+  prompt_text: what is the most important lesson here? {{{STORY}}}

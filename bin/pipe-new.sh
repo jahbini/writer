@@ -42,11 +42,22 @@ if [ -d "$PIPE_DIR" ]; then
   exit 1
 fi
 
-mkdir -p "$PIPE_DIR"/{state,logs,data,out}
+mkdir -p "$PIPE_DIR"/{state,logs,data,out,override}
 
 cat > "$PIPE_DIR/override.yaml" <<EOF
 # pipes/$NAME/override.yaml — created by bin/pipe-new.sh
 # Pipeline selector + model identity. See GPT/model_identity.md.
+pipeline: $PIPELINE
+
+run:
+  model: $MODEL
+EOF
+
+# Recipe-scoped human override — higher precedence than legacy
+# override.yaml. run.model duplicated on purpose (see comment in
+# ui_server.coffee handleCreatePipe).
+cat > "$PIPE_DIR/override/$PIPELINE.yaml" <<EOF
+# pipes/$NAME/override/$PIPELINE.yaml — created by bin/pipe-new.sh
 pipeline: $PIPELINE
 
 run:
