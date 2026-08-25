@@ -585,6 +585,25 @@
                 <select id="pipe-select"></select>
               </label>
               <button id="switch-pipe-button" type="button">Switch Pipe UI</button>
+              <details style="margin-top:8px;">
+                <summary style="cursor:pointer;">Create New Pipe</summary>
+                <div style="display:flex; flex-direction:column; gap:4px; margin-top:6px;">
+                  <label>
+                    New pipe name
+                    <input id="new-pipe-name" type="text" placeholder="my_pipe" spellcheck="false">
+                  </label>
+                  <label>
+                    HuggingFace model (org/name)
+                    <input id="new-pipe-model" type="text" placeholder="huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated" spellcheck="false">
+                  </label>
+                  <label>
+                    Starting recipe (default: reset)
+                    <input id="new-pipe-pipeline" type="text" placeholder="reset" spellcheck="false">
+                  </label>
+                  <button id="create-pipe-button" type="button">Create And Switch To Pipe</button>
+                  <div id="create-pipe-result" class="hint mono"></div>
+                </div>
+              </details>
               <button id="shutdown-ui-button" type="button">Shutdown UI Server</button>
               <button id="merge-pipe-button" type="button">Merge Adapter And SQLite From Other Machine</button>
               <div id="merge-result" class="hint mono"></div>
@@ -1848,6 +1867,43 @@
       }
     }
 
+    async function createPipe() {
+      const result = byId('create-pipe-result');
+      const name = (byId('new-pipe-name').value || '').trim();
+      const model = (byId('new-pipe-model').value || '').trim();
+      const pipeline = (byId('new-pipe-pipeline').value || 'reset').trim() || 'reset';
+      if (!name) { result.textContent = 'name required'; return; }
+      if (!model) { result.textContent = 'HuggingFace model required'; return; }
+      result.textContent = `creating pipes/${name}...`;
+      try {
+        const res = await fetch('/api/create_pipe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, model, pipeline })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || 'create pipe failed');
+        }
+        result.textContent = `created pipes/${name}; switching UI...`;
+        // Auto-switch to the new pipe. UI relaunches on the peer side;
+        // reload after a short delay to pick up the new active pipe.
+        const sw = await fetch('/api/switch_pipe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pipe: name })
+        });
+        const swData = await sw.json();
+        if (!sw.ok || !swData.ok) {
+          throw new Error(swData.error || 'switch pipe after create failed');
+        }
+        selectedPipeName = name;
+        window.setTimeout(() => window.location.reload(), 1800);
+      } catch (err) {
+        result.textContent = String(err.message || err);
+      }
+    }
+
     async function mergePipe() {
       const result = byId('merge-result');
       console.debug('[ui] mergePipe:click', {
@@ -2077,6 +2133,9 @@
     });
 	    byId('switch-pipe-button').addEventListener('click', () => {
 	      switchPipe().catch(console.error);
+	    });
+	    byId('create-pipe-button').addEventListener('click', () => {
+	      createPipe().catch(console.error);
 	    });
 	    byId('shutdown-ui-button').addEventListener('click', () => {
 	      shutdownUi().catch(console.error);

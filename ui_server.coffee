@@ -1473,6 +1473,76 @@ handleShutdownUi = (req, res) ->
 # from the active pipe's experiment.yaml (first step that has one),
 # copies the .safetensors file + adapter_config.json + a small
 # provenance metadata json.
+handleCreatePipe = (req, res) ->
+  # POST /api/create_pipe  body: {name, model, pipeline?}
+  # Scaffolds pipes/<name>/ with an override.yaml pinning pipeline +
+  # run.model (per model_identity.md — recipes MUST NOT default it),
+  # plus empty state/, logs/, data/, out/ dirs and a README.md.
+  # Returns {ok, name, cwd, cwd_relative} on success; the client is
+  # responsible for calling /api/switch_pipe next if it wants to
+  # switch the UI to the new pipe.
+  bodyText = await readRequestBody req
+  payload = {}
+  try
+    payload = JSON.parse(bodyText ? '{}')
+  catch
+    return sendJson res, 400, { ok: false, error: 'invalid json body' }
+
+  name  = String(payload.name ? '').trim()
+  model = String(payload.model ? '').trim()
+  pipelineName = String(payload.pipeline ? 'reset').trim() or 'reset'
+
+  return sendJson(res, 400, { ok: false, error: 'name required' }) unless name.length
+  return sendJson(res, 400, { ok: false, error: 'model (HuggingFace org/name) required' }) unless model.length
+  # Safe pipe name: same rules as workspacePipeName / handleSwitchPipe.
+  return sendJson(res, 400, { ok: false, error: "invalid name: use letters, digits, _, -, . only" }) unless /^[A-Za-z0-9._-]+$/.test(name)
+  return sendJson(res, 400, { ok: false, error: "invalid name" }) if name in ['.', '..']
+  # Model shape: <org>/<name> — permissive; ui_server doesn't reach
+  # HF, download_model.coffee does. Reject only obviously bad shapes.
+  return sendJson(res, 400, { ok: false, error: "invalid pipeline name" }) unless /^[A-Za-z0-9._-]+$/.test(pipelineName)
+
+  pipeDir = path.join(PIPES_ROOT, name)
+  return sendJson(res, 409, { ok: false, error: "pipes/#{name} already exists" }) if fs.existsSync(pipeDir)
+
+  try
+    fs.mkdirSync pipeDir, { recursive: true }
+    for sub in ['state', 'logs', 'data', 'out']
+      fs.mkdirSync path.join(pipeDir, sub), { recursive: true }
+
+    overrideText = """
+      # pipes/#{name}/override.yaml — created by /api/create_pipe
+      # Pipeline selector + model identity. See GPT/model_identity.md.
+      pipeline: #{pipelineName}
+
+      run:
+        model: #{model}
+    """
+    fs.writeFileSync path.join(pipeDir, 'override.yaml'), overrideText + '\n', 'utf8'
+
+    readmeText = """
+      # #{name}
+
+      Created via the UI on #{new Date().toISOString()}.
+
+      - **Base model**: `#{model}`
+      - **Starting recipe**: `#{pipelineName}`
+
+      Launch: switch the UI to this pipe from the "Switch UI To Pipe"
+      dropdown and press "Write Override And Run", or from a shell:
+      `cd pipes/#{name} && npx pipeline`.
+    """
+    fs.writeFileSync path.join(pipeDir, 'README.md'), readmeText + '\n', 'utf8'
+  catch err
+    return sendJson res, 500, { ok: false, error: "scaffold failed: #{err?.message ? err}" }
+
+  sendJson res, 200,
+    ok:            true
+    name:          name
+    cwd:           pipeDir
+    cwd_relative:  path.relative(BASE, pipeDir)
+    pipeline:      pipelineName
+    model:         model
+
 handleSaveGoodAdapter = (req, res) ->
   bodyText = await readRequestBody req
   payload = {}
@@ -1930,6 +2000,11 @@ server = http.createServer (req, res) ->
         error: String(err?.message ? err)
   if url is '/api/clear_output' and req.method is 'POST'
     return Promise.resolve(handleClearOutput(req, res)).catch (err) ->
+      sendJson res, 500,
+        ok: false
+        error: String(err?.message ? err)
+  if url is '/api/create_pipe' and req.method is 'POST'
+    return Promise.resolve(handleCreatePipe(req, res)).catch (err) ->
       sendJson res, 500,
         ok: false
         error: String(err?.message ? err)
