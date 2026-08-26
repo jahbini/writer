@@ -42,7 +42,10 @@ if [ -d "$PIPE_DIR" ]; then
   exit 1
 fi
 
-mkdir -p "$PIPE_DIR"/{state,logs,data,out,override}
+mkdir -p "$PIPE_DIR"/{state,logs,out,override}
+# NOTE: no `data/` — data files live at project BASE (~/writer/data/)
+# via CWD→BASE→EXEC resolver. A pipe can shadow by creating data/<file>
+# under the pipe dir later.
 
 cat > "$PIPE_DIR/override.yaml" <<EOF
 # pipes/$NAME/override.yaml — created by bin/pipe-new.sh
@@ -53,11 +56,15 @@ run:
   model: $MODEL
 EOF
 
-# Recipe-scoped override stub — pipeline: only, NO run.model. Removes
-# the readOverride lazy-materialize race when the UI restarts on this
-# pipe. See ui_server.coffee handleCreatePipe for full rationale.
+# Recipe-scoped override — pipeline + run.model. Duplicated with
+# legacy override.yaml on purpose so the UI's Human Override panel
+# shows the model identity. See ui_server.coffee handleCreatePipe.
 cat > "$PIPE_DIR/override/$PIPELINE.yaml" <<EOF
+# pipes/$NAME/override/$PIPELINE.yaml — created by bin/pipe-new.sh
 pipeline: $PIPELINE
+
+run:
+  model: $MODEL
 EOF
 
 cat > "$PIPE_DIR/README.md" <<EOF
@@ -74,6 +81,6 @@ EOF
 
 echo "Created $PIPE_DIR/"
 echo "  override.yaml — pipeline: $PIPELINE, run.model: $MODEL"
-echo "  state/ logs/ data/ out/ README.md"
+echo "  state/ logs/ out/ override/$PIPELINE.yaml README.md"
 echo
 echo "Run it: cd $PIPE_DIR && npx pipeline"

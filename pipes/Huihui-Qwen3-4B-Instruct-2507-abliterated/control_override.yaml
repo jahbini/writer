@@ -1,4 +1,0 @@
-pipeline: storacle
-storacle:
-  story_id: joes-small-claims-court-bar-and-grill-md
-  prompt_text: what is the most important lesson here? {{{STORY}}}

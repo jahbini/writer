@@ -1515,7 +1515,10 @@ handleCreatePipe = (req, res) ->
 
   try
     fs.mkdirSync pipeDir, { recursive: true }
-    for sub in ['state', 'logs', 'data', 'out']
+    # No per-pipe data/ dir — data files live at project BASE
+    # (writer/data/) and resolve via the CWD→BASE→EXEC walk. A pipe
+    # can shadow later by creating data/<file> under the pipe dir.
+    for sub in ['state', 'logs', 'out']
       fs.mkdirSync path.join(pipeDir, sub), { recursive: true }
 
     overrideText = """
@@ -1528,23 +1531,32 @@ handleCreatePipe = (req, res) ->
     """
     fs.writeFileSync path.join(pipeDir, 'override.yaml'), overrideText + '\n', 'utf8'
 
-    # Pre-create the recipe-scoped override with ONLY `pipeline:` so
-    # readOverride() has no work to do on the new UI's first /api/status.
-    # Deliberately NOT writing run.model here — model identity stays in
-    # legacy override.yaml alone (see GPT/model_identity.md warning
-    # about duplicating model in recipe-scoped overrides). The runner's
-    # deep-merge still delivers run.model to experiment.run because
-    # legacy override.yaml is always re-read.
+    # Pre-create the recipe-scoped override (the "human override" the
+    # UI displays) with pipeline + run.model. Two reasons:
+    #   1. Kills the readOverride() race — the file exists on first
+    #      /api/status, no lazy materialization from legacy needed.
+    #   2. UI's Human Override display shows the model.
     #
-    # Rationale: the switch_pipe restart takes a moment. If anything
-    # (browser reload, first launch click) races with the UI coming
-    # back up before readOverride has lazily materialized this file,
-    # the new UI can end up with an empty human_override_text. Writing
-    # it here removes the race.
+    # Yes, this duplicates run.model with legacy override.yaml. The
+    # drift concern (from GPT/model_identity.md) has always been about
+    # HUMAN edits diverging; a single writer here writes identical
+    # values so there's no drift at creation. If a user later edits
+    # one file's model, our readOverride fix (2026-08-26) no longer
+    # infers from pipe name, so no automatic corruption path either.
     humanOverrideDir  = path.join(pipeDir, 'override')
     humanOverridePath = path.join(humanOverrideDir, "#{pipelineName}.yaml")
+    humanOverrideText = """
+      # pipes/#{name}/override/#{pipelineName}.yaml — created by /api/create_pipe
+      # Recipe-scoped human override (higher precedence than legacy
+      # override.yaml). run.model duplicated here on purpose so the UI
+      # shows model identity in the Human Override panel.
+      pipeline: #{pipelineName}
+
+      run:
+        model: #{model}
+    """
     fs.mkdirSync humanOverrideDir, { recursive: true }
-    fs.writeFileSync humanOverridePath, "pipeline: #{pipelineName}\n", 'utf8'
+    fs.writeFileSync humanOverridePath, humanOverrideText + '\n', 'utf8'
 
     readmeText = """
       # #{name}
