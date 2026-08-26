@@ -1,0 +1,3 @@
+pipeline: reset
+run:
+  model: mlx-community/Qwen3.8-27B-4bit

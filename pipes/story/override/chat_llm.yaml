@@ -1,4 +1,0 @@
-pipeline: chat_llm
-chat_llm:
-  llm:
-    maxTokens: 2000
