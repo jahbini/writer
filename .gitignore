@@ -56,7 +56,7 @@ pipeline.json
 experiment.yaml
 *-wal
 *-shm
-pipes/*
+pipes/
 
 # macOS
 .DS_Store
