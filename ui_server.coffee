@@ -359,7 +359,7 @@ loadDropdownOptions = (specPath) ->
     # top-level grammar key (jim_tragedy, spy, …). Label = the key
     # verbatim; a short desc from the YAML would be nicer but the UI's
     # dropdown renderer shows the label only.
-    grammarsPath = path.join CWD, 'data', 'dramatic_grammars.yaml'
+    grammarsPath = resolveDataAsset 'dramatic_grammars.yaml'
     return [] unless fs.existsSync grammarsPath
     try
       doc = readYaml grammarsPath
@@ -372,7 +372,7 @@ loadDropdownOptions = (specPath) ->
     # so the human can eyeball what they're picking. HYGIENE: label
     # renders the RENDER-SAFE `situation` field, never name_internal
     # or glyph_binary.
-    sitPath = path.join CWD, 'data', 'iching_situations.yaml'
+    sitPath = resolveDataAsset 'iching_situations.yaml'
     return [] unless fs.existsSync sitPath
     try
       doc = readYaml sitPath
@@ -707,8 +707,18 @@ readLegacyOverride = ->
 readOverride = (pipelineName = null) ->
   foundational = {}
   pipeName = workspacePipeName(CWD)
-  inferredModel = inferModelIdFromPipeName(pipeName)
   legacy = readLegacyOverride()
+  # Only infer run.model from the pipe directory name for TRULY BARE
+  # pipes — those with no legacy override.yaml. Any pipe created via
+  # /api/create_pipe has run.model set explicitly in the legacy file,
+  # and the deep-merge will deliver it. Inferring from a name like
+  # `q35_4` yields nonsense (`q/35_4`), and writing that into a
+  # recipe-scoped override shadows the legacy's correct value.
+  legacyModel = String(legacy?.run?.model ? '').trim()
+  inferredModel = if legacyModel.length is 0
+    inferModelIdFromPipeName(pipeName)
+  else
+    ''
   selectedPipeline = String(pipelineName ? '').trim()
   selectedPipeline = String(legacy.pipeline ? '').trim() unless selectedPipeline.length
   selectedPath = overridePathForPipeline selectedPipeline
@@ -773,8 +783,7 @@ buildControls = ->
   # The story library is per-pipe data: prefer the active pipe's data/ (CWD),
   # fall back to EXEC_ROOT for older layouts. (The package has no data/, so a
   # plain EXEC_ROOT read leaves the scene/arrival dropdowns empty.)
-  cwdLibraryPath = path.join(CWD, 'data', 'jim_story_library.yaml')
-  libraryPath = if fs.existsSync(cwdLibraryPath) then cwdLibraryPath else path.join(EXEC_ROOT, 'data', 'jim_story_library.yaml')
+  libraryPath = resolveDataAsset('jim_story_library.yaml')
   libraryDoc = readYaml libraryPath
   library = libraryDoc?.library ? {}
   recipeStoryStep = recipe?.select_story_recipe ? {}
@@ -1843,6 +1852,16 @@ resolveUiAsset = (rel) ->
     candidate = path.join(root, 'ui', rel)
     return candidate if fs.existsSync(candidate)
   path.join(EXEC_ROOT, 'ui', rel)
+
+# Mirror of resolveUiAsset for data/. Lets shared data files (story
+# libraries, dramatic grammars, i-ching tables, jim.md) live at the
+# project BASE — /writer/data/ — instead of duplicating per-pipe. A
+# pipe can still shadow by dropping its own <pipe>/data/<file> in.
+resolveDataAsset = (rel) ->
+  for root in [CWD, BASE, EXEC_ROOT]
+    candidate = path.join(root, 'data', rel)
+    return candidate if fs.existsSync(candidate)
+  path.join(EXEC_ROOT, 'data', rel)
 
 server = http.createServer (req, res) ->
   url = req.url ? '/'
