@@ -221,6 +221,19 @@ workspacePipeName = (workspacePath = CWD) ->
   rel.split(path.sep)[0] ? null
 
 inferModelIdFromPipeName = (pipeName) ->
+  # Guard: only infer for TRULY BARE pipes — those with no legacy
+  # override.yaml that already pins run.model. Pipes created via
+  # /api/create_pipe or bin/pipe-new.sh always set run.model in the
+  # legacy file, and the runner's deep-merge delivers it. Inferring
+  # from a name like `q35_4` yields nonsense (`q35/4`), so any caller
+  # that runs the inference without this guard silently corrupts the
+  # recipe-scoped override. Folded into the helper so future callers
+  # can't skip the check.
+  legacyModel = try
+    String(readLegacyOverride()?.run?.model ? '').trim()
+  catch
+    ''
+  return '' if legacyModel.length
   name = String(pipeName ? '').trim()
   return '' unless name.length
   underscoreIndex = name.indexOf('_')
@@ -708,17 +721,7 @@ readOverride = (pipelineName = null) ->
   foundational = {}
   pipeName = workspacePipeName(CWD)
   legacy = readLegacyOverride()
-  # Only infer run.model from the pipe directory name for TRULY BARE
-  # pipes — those with no legacy override.yaml. Any pipe created via
-  # /api/create_pipe has run.model set explicitly in the legacy file,
-  # and the deep-merge will deliver it. Inferring from a name like
-  # `q35_4` yields nonsense (`q/35_4`), and writing that into a
-  # recipe-scoped override shadows the legacy's correct value.
-  legacyModel = String(legacy?.run?.model ? '').trim()
-  inferredModel = if legacyModel.length is 0
-    inferModelIdFromPipeName(pipeName)
-  else
-    ''
+  inferredModel = inferModelIdFromPipeName(pipeName)
   selectedPipeline = String(pipelineName ? '').trim()
   selectedPipeline = String(legacy.pipeline ? '').trim() unless selectedPipeline.length
   selectedPath = overridePathForPipeline selectedPipeline

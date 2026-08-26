@@ -22,6 +22,10 @@ Rules:
 
 ## Current repository assumptions worth preserving
 
+- **Shared data files live at `~/writer/data/`** (project BASE), not
+  per-pipe. Moved 2026-08-26. Steps read via `L.theLowdown('data/foo.yaml')`
+  which resolves through the meta layer's CWD → BASE → EXEC walk. A
+  pipe can shadow by creating `pipes/<name>/data/<file>` — CWD tier wins.
 - The repo is **pipe-centric**; active workspaces live under `pipes/<pipe>/`.
 - **The runner's `CWD` is the pipe directory, `pipes/<pipe>/`. Run-state
   and run-config files are resolved relative to `CWD`, NOT the repo
