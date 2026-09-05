@@ -202,9 +202,19 @@ build_diary_prompt_ite:
   include_chunk_passages: [ UI_checkbox, true ]
   chunk_excerpt_chars: 700
 
+generate_diary_without_adapter_ite:
+  run: diary_ite/generate_diary_without_adapter_ite.coffee
+  depends_on: [build_diary_prompt_ite]
+  needs: [story_parts, diary_prompt_text]
+  makes: [diary_base_raw, diary_base_meta, diary_base_text]
+  quantized_model_dir: ${MODELS}/${run.model}-mlx4
+  llm:
+    maxTokens: 2000
+    temperature: 0.7
+
 generate_diary_with_adapter_ite:
   run: diary_ite/generate_diary_with_adapter_ite.coffee
-  depends_on: [build_diary_prompt_ite]
+  depends_on: [generate_diary_without_adapter_ite]
   needs: [story_parts, diary_prompt_text]
   makes: [diary_adapted_raw, diary_adapted_meta, diary_adapted_text]
   # Adapter picker (UI dropdown). Lists build/adapter* dirs + checkpoints + a
@@ -215,9 +225,11 @@ generate_diary_with_adapter_ite:
     maxTokens: 2000
     temperature: 0.7
 
-# spystory has NO base generator. The adapter step (above) is the
-# sole generation path. state_extractor and everything downstream
-# depend on the adapter directly — no [never]-gated sibling.
+# Consistency fix 2026-09-05: spystory now has both diary generators
+# (base + adapter), matching story.yaml and diary_ite.yaml. adapter
+# depends on base so they run in a defined order and produce both
+# artifacts for comparison; state_extractor still reads the adapter
+# output only (spystory's continuity comes from the adapted path).
 
 # ─── State Extractor (Increment e4 — continuity validation) ─────────
 # After generation, reads the finished chapter + the planned outline

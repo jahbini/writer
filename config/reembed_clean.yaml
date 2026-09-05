@@ -18,6 +18,8 @@ reembed_chunks_clean:
   depends_on: []
   needs: []
   makes: []
-  # quantized_model_dir: pin per-pipe as
-  # `reembed_chunks_clean.quantized_model_dir: ${MODELS}/<org>/<name>-mlx4`.
+  # Match reset.yaml's convention. If the -mlx4 dir doesn't exist
+  # (quantize crashed and only the fallback symlink is present),
+  # the step now falls back to the raw fp16 dir automatically.
+  quantized_model_dir: ${MODELS}/${run.model}-mlx4
   clean_embeddings_file: build/chunk_embeddings_clean.jsonl

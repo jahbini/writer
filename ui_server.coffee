@@ -644,12 +644,17 @@ pad2 = (n) ->
   text = String(Number(n) ? 0)
   if text.length < 2 then "0#{text}" else text
 
-buildRunTag = ->
+safeStem = (s) ->
+  # Filesystem-friendly: strip anything not alnum / dash / underscore.
+  String(s ? '').replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') or 'pipe'
+
+buildRunTag = (recipe = null) ->
   now = new Date()
   hhmm = "#{pad2(now.getHours())}_#{pad2(now.getMinutes())}"
+  prefix = if recipe? and String(recipe).length then safeStem(recipe) else 'pipe'
   {
     hh_mm: hhmm
-    logdir: "pipe_#{hhmm}"
+    logdir: "#{prefix}_#{hhmm}"
   }
 
 tailText = (p, maxLines = 120) ->
@@ -683,7 +688,8 @@ readJsonlTail = (p, maxRows = 80) ->
 latestLogStem = ->
   logDir = path.join(CWD, 'logs')
   return null unless fs.existsSync(logDir)
-  names = fs.readdirSync(logDir).filter (name) -> /^pipe_\d{2}_\d{2}\.(log|err)$/.test(name)
+  # Accept both legacy pipe_HH_MM and new <recipe>_HH_MM basenames.
+  names = fs.readdirSync(logDir).filter (name) -> /^[A-Za-z0-9_-]+_\d{2}_\d{2}\.(log|err)$/.test(name)
   return null unless names.length
   stems = {}
   for name in names
@@ -945,6 +951,12 @@ buildStatus = ->
   storiesRemaining = if oracleRemaining? then oracleRemaining else loraRemaining
   events = readJsonlTail path.join(CWD, 'state', 'ui-events.jsonl')
   steps = collectStepStates()
+  # Per-pipe env overrides (SESSION_API_MEM_CEIL_MB, etc). Written
+  # by puppeteer's raise-ceiling action; applied by startRunner at
+  # every subsequent spawn. Surface to the UI so humans can see
+  # what env vars this pipe carries.
+  envOverrides = {}
+  try envOverrides = readJson(path.join(CWD, 'env_overrides.json'), {}) catch
   stem = if run?.logdir? then String(run.logdir) else latestLogStem()
   latestLog = if stem? then readText(path.join(CWD, 'logs', "#{stem}.log")) else ''
   latestErr = if stem? then readText(path.join(CWD, 'logs', "#{stem}.err")) else ''
@@ -966,6 +978,7 @@ buildStatus = ->
     out_files: expectedOutputs.out_files
     diary_files: expectedOutputs.diary_files
     log_files: collectLogFiles(run)
+    env_overrides: envOverrides
   }
 
 isAllowedFilePath = (relativePath) ->
@@ -1228,7 +1241,11 @@ scheduleRepeatLaunch = ->
   , delayMs
 
 startRunner = ->
-  runTag = buildRunTag()
+  # Read the active pipeline from control_override.yaml so the log
+  # basename is <recipe>_HH_MM.log instead of the opaque pipe_HH_MM.
+  recipeForTag = null
+  try recipeForTag = readControlOverride()?.pipeline catch then null
+  runTag = buildRunTag(recipeForTag)
   logDir = path.join(CWD, 'logs')
   fs.mkdirSync logDir, { recursive: true }
   logPath = path.join(logDir, "#{runTag.logdir}.log")
@@ -1238,11 +1255,23 @@ startRunner = ->
   outFd = fs.openSync logPath, 'a'
   errFd = fs.openSync errPath, 'a'
 
+  # Read per-pipe env overrides from `env_overrides.json` — a simple
+  # key/value map written by the puppeteer's "raise ceiling" action
+  # (and any other per-pipe env-tuning UI). Values here override any
+  # process.env inherited from our own environment.
+  envOverrides = {}
+  overridePath = path.join(CWD, 'env_overrides.json')
+  if fs.existsSync overridePath
+    try
+      envOverrides = JSON.parse fs.readFileSync(overridePath, 'utf8')
+    catch err
+      console.error "[startRunner] env_overrides.json parse failed: #{err?.message ? err}"
+
   child = spawn 'coffee', [RUNNER],
     cwd: CWD
     detached: true
     stdio: ['ignore', outFd, errFd]
-    env: Object.assign {}, process.env,
+    env: Object.assign {}, process.env, envOverrides,
       EXEC: EXEC_ROOT
       CWD: CWD
       PWD: CWD
@@ -1438,8 +1467,20 @@ handleKill = (req, res) ->
   # SIGTERM first (graceful if the runner IS idle between steps),
   # then SIGKILL after ~1s if the process is still alive. See
   # GPT/story/spystory.md (or the runner comment) for the diagnosis.
+  # Kill the whole PROCESS GROUP (negative pid). Runner is spawned
+  # detached, so its children (git-lfs, python subprocs) inherit its
+  # group. Plain `process.kill(pid, sig)` only signals the leader,
+  # leaving subprocesses holding FDs and keeping the run visibly
+  # alive. `process.kill(-pid, sig)` signals every process in the
+  # group.
+  killGroup = (target, sig) ->
+    try
+      process.kill -target, sig
+    catch
+      process.kill target, sig
+
   try
-    process.kill pid, 'SIGTERM'
+    killGroup pid, 'SIGTERM'
   catch err
     return sendJson res, 500,
       ok: false
@@ -1449,8 +1490,8 @@ handleKill = (req, res) ->
     try
       # signal 0 = liveness probe; throws ESRCH when the pid is gone.
       process.kill pid, 0
-      process.kill pid, 'SIGKILL'
-      console.log "[kill] pid #{pid} did not exit on SIGTERM within 1s; sent SIGKILL"
+      killGroup pid, 'SIGKILL'
+      console.log "[kill] pid #{pid} did not exit on SIGTERM within 1s; sent SIGKILL to process group"
     catch
       # process already gone — nothing to do.
       null
@@ -1743,7 +1784,7 @@ handleClearLogs = (req, res) ->
   logDir = path.join(CWD, 'logs')
   removed = 0
   if fs.existsSync(logDir)
-    for name in fs.readdirSync(logDir) when /^pipe_\d{2}_\d{2}\.(log|err)$/.test(name)
+    for name in fs.readdirSync(logDir) when /^[A-Za-z0-9_-]+_\d{2}_\d{2}\.(log|err)$/.test(name)
       try
         fs.unlinkSync path.join(logDir, name)
         removed += 1
@@ -1880,6 +1921,54 @@ resolveDataAsset = (rel) ->
 
 server = http.createServer (req, res) ->
   url = req.url ? '/'
+
+  # Deep-link URL to jump to a specific pipe.
+  #   http://mac-mini.local:4311/pipe/<pipe-name>
+  #   http://mac-mini.local:4311/?pipe=<pipe-name>
+  # Both perform the same in-place ui_server respawn as
+  # POST /api/switch_pipe, then send an HTML page that reloads
+  # after 3s so the browser picks up the fresh workspace UI.
+  pipeName = null
+  if url.startsWith '/pipe/'
+    pipeName = decodeURIComponent(url.slice('/pipe/'.length).split('?')[0].split('#')[0])
+  else if url.startsWith '/?pipe='
+    pipeName = decodeURIComponent(url.slice('/?pipe='.length).split('&')[0].split('#')[0])
+  if pipeName?
+    pipeName = String(pipeName).trim()
+    if not pipeName.length or pipeName.includes('/') or pipeName.includes(path.sep) or pipeName is '.' or pipeName is '..'
+      res.writeHead 400, {'Content-Type': 'text/html; charset=utf-8'}
+      return res.end "<h3>bad pipe name: <code>#{pipeName}</code></h3><p><a href='/'>home</a></p>"
+    targetCwd = path.join(PIPES_ROOT, pipeName)
+    unless fs.existsSync(targetCwd) and fs.statSync(targetCwd).isDirectory()
+      res.writeHead 404, {'Content-Type': 'text/html; charset=utf-8'}
+      return res.end "<h3>pipe not found: <code>#{pipeName}</code></h3><p><a href='/'>home</a></p>"
+    # Reuse the switch machinery — build a fake req + res.
+    fakeReq =
+      on: (evt, cb) -> cb(Buffer.from(JSON.stringify({pipe: pipeName}))) if evt is 'data'
+      _emitEnd: null
+    fakeReq.on = (evt, cb) ->
+      if evt is 'data' then cb(Buffer.from(JSON.stringify({pipe: pipeName})))
+      else if evt is 'end' then setImmediate(cb)
+    fakeRes =
+      writeHead: -> null
+      end: -> null
+      _fake: true
+    # Kick off the switch (async, fire-and-forget).
+    Promise.resolve(handleSwitchPipe(fakeReq, fakeRes)).catch (err) ->
+      console.error "[deep-link switch] #{err?.message ? err}"
+    # Send the user a "hang on, switching" page that reloads to `/`.
+    res.writeHead 200, {'Content-Type': 'text/html; charset=utf-8'}
+    res.end """
+      <!doctype html><meta charset="utf-8">
+      <title>switching to #{pipeName}…</title>
+      <meta http-equiv="refresh" content="3;url=/">
+      <style>body{font-family:-apple-system,sans-serif;padding:40px;color:#333}</style>
+      <h3>Switching workspace to <code>#{pipeName}</code>…</h3>
+      <p>UI is respawning. This page reloads in ~3 seconds.</p>
+      <p><a href="/">Go now</a></p>
+    """
+    return
+
   if url is '/' or url is '/index.html'
     return sendHtml res, resolveUiAsset('index.html')
   if url is '/api/status'
@@ -1996,21 +2085,35 @@ server = http.createServer (req, res) ->
       pid: launch.pid
       hh_mm: launch.hh_mm
       logdir: launch.logdir
-  if url is '/api/pipeline_svg' and req.method is 'GET'
-    # Render the CURRENT pipe's experiment.yaml as a DAG SVG using
-    # ../../pipeline_svg.coffee (self-contained styles, data-step attrs
-    # so downstream JS can toggle .running / .done classes to sync
-    # with #steps-body). No cache: hot-reload the renderer on every
-    # request so edits to pipeline_svg.coffee land without a restart.
-    expPath = path.join(CWD, 'experiment.yaml')
-    unless fs.existsSync expPath
-      res.writeHead 404, { 'Content-Type': 'text/plain; charset=utf-8' }
-      return res.end 'no experiment.yaml yet — run the pipeline once, then reload.'
+  if url is '/api/pipeline_svg' or url.startsWith('/api/pipeline_svg?')
+    # Render a recipe's DAG SVG using pipeline_svg.coffee.
+    # Default: read the CURRENT pipe's experiment.yaml (last-run
+    # config). With ?pipeline=<name>, load that recipe's config
+    # directly (config/<name>.yaml + expandIncludes). Lets the UI
+    # preview a different recipe's graph BEFORE running it.
+    query = new URL(url, 'http://127.0.0.1').searchParams
+    requestedPipeline = String(query.get('pipeline') ? '').trim()
+    doc = null
     try
+      if requestedPipeline.length
+        configPath = resolveConfigPath(requestedPipeline)
+        unless configPath? and fs.existsSync(configPath)
+          res.writeHead 404, { 'Content-Type': 'text/plain; charset=utf-8' }
+          return res.end "no config for recipe '#{requestedPipeline}'"
+        # Preview: just read the recipe file. Includes are not
+        # expanded here; the graph will show the recipe's direct
+        # structure. Good enough for "what steps does this recipe
+        # run" without needing full runner semantics.
+        doc = readYaml(configPath)
+      else
+        expPath = path.join(CWD, 'experiment.yaml')
+        unless fs.existsSync expPath
+          res.writeHead 404, { 'Content-Type': 'text/plain; charset=utf-8' }
+          return res.end 'no experiment.yaml yet — run the pipeline once, then reload.'
+        doc = yaml.load fs.readFileSync(expPath, 'utf8')
       scriptPath = path.join(BASE, 'pipeline_svg.coffee')
       delete require.cache[require.resolve(scriptPath)] if require.cache[require.resolve(scriptPath)]?
       { renderSvg } = require scriptPath
-      doc = yaml.load fs.readFileSync(expPath, 'utf8')
       svg = renderSvg doc
       res.writeHead 200,
         'Content-Type': 'image/svg+xml; charset=utf-8'

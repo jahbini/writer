@@ -580,6 +580,7 @@
             <div class="controls-group">
               <h3>Pipe</h3>
               <div id="pipe-current" class="mono"></div>
+              <div id="pipe-env-overrides" style="font-size:0.85em;margin-top:4px;"></div>
               <label>
                 Switch UI To Pipe
                 <select id="pipe-select"></select>
@@ -888,6 +889,21 @@
       if (!availableNames.includes(desired)) desired = current;
 	      currentPipeName = current;
 	      byId('pipe-current').textContent = current ? `active: ${current}` : 'active: (not in pipes)';
+      // env_overrides badge — persistent per-pipe env vars (e.g.
+      // SESSION_API_MEM_CEIL_MB raised by puppeteer). Applied on
+      // EVERY startRunner spawn for this pipe.
+      try {
+        const envEl = document.getElementById('pipe-env-overrides');
+        if (envEl) {
+          const env = (window._lastStatus && window._lastStatus.env_overrides) || {};
+          const keys = Object.keys(env);
+          if (keys.length) {
+            envEl.innerHTML = 'env: ' + keys.map(k => `<span style="background:#eef;color:#049;border:1px solid #ccd;border-radius:3px;padding:1px 6px;margin-right:4px;font-family:monospace;">${k}=${env[k]}</span>`).join('');
+          } else {
+            envEl.innerHTML = '';
+          }
+        }
+      } catch (e) {}
 	      pipeSelect.innerHTML = pipes.map((row) => `
 	        <option value="${row.name}" ${row.name === desired ? 'selected' : ''}>${row.name}${row.is_active ? ' (active)' : ''}</option>
 	      `).join('');
@@ -1257,6 +1273,7 @@
       console.debug('[ui] refresh:start');
       const res = await fetch('/api/status', { cache: 'no-store' });
       const data = await res.json();
+      window._lastStatus = data;   // stash for env-badge + other consumers
       const run = data.run || {};
       const mergeRun = data.merge_run || {};
       const pipelineState = data.pipeline_state || {};
@@ -1342,12 +1359,20 @@
       const container = byId('pipeline-graph');
       const statusEl = byId('pipeline-graph-status');
       if (!container) return;
-      // Signal: (currentPipe, runPipeline). Same pair → don't re-fetch.
-      const sig = `${currentPipeName || ''}::${byId('subtitle')?.textContent || ''}`;
+      // If the Recipe Selector picked a specific recipe, preview
+      // THAT recipe's graph directly (from its config), not the
+      // last-run's experiment.yaml. Lets you inspect a recipe
+      // before pressing Write Override and Run.
+      const selectedPipeline = byId('pipeline-select')?.value || '';
+      const graphUrl = selectedPipeline
+        ? `/api/pipeline_svg?pipeline=${encodeURIComponent(selectedPipeline)}`
+        : '/api/pipeline_svg';
+      // Signal: (currentPipe, selected recipe). Same pair → don't re-fetch.
+      const sig = `${currentPipeName || ''}::${selectedPipeline}`;
       let svgEl = container.querySelector('svg');
       if (sig !== lastGraphSig || !svgEl) {
         try {
-          const res = await fetch('/api/pipeline_svg', { cache: 'no-store' });
+          const res = await fetch(graphUrl, { cache: 'no-store' });
           if (res.ok) {
             const svgText = await res.text();
             container.innerHTML = svgText;
