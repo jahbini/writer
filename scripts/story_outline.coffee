@@ -112,8 +112,14 @@ shapeLooksOk = (outline) ->
     return false unless isFinal or ch?.next_chapter_trigger?
     return false unless ch?.chapter_dramatic_axis?
     axis = ch.chapter_dramatic_axis
-    return false unless axis.external_problem? and axis.internal_obstacle?
-    return false unless axis.missed_opportunity? and axis.primary_consequence?
+    # 2026-09-06: only require the two load-bearing dramatic-axis
+    # fields — internal_obstacle and primary_consequence. external_problem
+    # and missed_opportunity are decorative and downstream steps
+    # (story_spine, story_beats, diary generators) tolerate nulls.
+    # Smaller models (qwen2-5-3b) truthfully return null for slots that
+    # don't apply (pure-internal or chase narratives with no missed chance);
+    # requiring all four rejects legitimate outlines.
+    return false unless axis.internal_obstacle? and axis.primary_consequence?
   true
 
 summarizeAtomList = (list, limit = 10) ->
@@ -395,7 +401,7 @@ Return the JSON now.
       outline =
         parse_error: true
         raw: raw
-        message: "story_outline could not extract a valid outline (raise llm.maxTokens if raw ended mid-object; check that chapter_order[] has 3+ chapters and required fields)"
+        message: "story_outline shapeLooksOk() rejected the outline. Common causes: (a) JSON truncated mid-object — raise llm.maxTokens; (b) chapter missing chapter_id / chapter_number / chapter_purpose / ending_state / chapter_dramatic_axis; (c) chapter_dramatic_axis.internal_obstacle or .primary_consequence is null (both are required; external_problem and missed_opportunity may be null); (d) unresolved_cast entry missing name / archetype / dramatic_relation; (e) non-final chapter missing next_chapter_trigger."
 
     # ── Defensive scrub: archetype keys must NEVER appear as cast
     #    labels. The prompt says so explicitly with a WRONG/RIGHT

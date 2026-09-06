@@ -1460,19 +1460,14 @@ handleKill = (req, res) ->
 
   return sendJson(res, 400, { ok: false, error: 'no active run pid recorded' }) unless pid > 0
 
-  # SIGTERM → SIGKILL escalation. The runner registers a SIGTERM
-  # handler (pipeline_runner.coffee ~2092), but during an in-process
-  # native MLX generation the main thread is inside a C++ call and
-  # the JS event loop can't spin — so the handler queues indefinitely.
-  # SIGTERM first (graceful if the runner IS idle between steps),
-  # then SIGKILL after ~1s if the process is still alive. See
-  # GPT/story/spystory.md (or the runner comment) for the diagnosis.
-  # Kill the whole PROCESS GROUP (negative pid). Runner is spawned
-  # detached, so its children (git-lfs, python subprocs) inherit its
-  # group. Plain `process.kill(pid, sig)` only signals the leader,
-  # leaving subprocesses holding FDs and keeping the run visibly
-  # alive. `process.kill(-pid, sig)` signals every process in the
-  # group.
+  # 2026-09-07: SIGKILL immediately. Kill button = user's decision
+  # that this run is done, no grace period needed. The prior
+  # SIGTERM→SIGKILL escalation added 1s of latency and was moot
+  # anyway — during in-process native MLX generation the main
+  # thread is inside a C++ call and the JS SIGTERM handler can't
+  # spin, so SIGTERM never landed cleanly. Skip the ritual: SIGKILL
+  # the whole process group (negative pid — kills detached children:
+  # git-lfs, python subprocs, MLX workers).
   killGroup = (target, sig) ->
     try
       process.kill -target, sig
@@ -1480,22 +1475,12 @@ handleKill = (req, res) ->
       process.kill target, sig
 
   try
-    killGroup pid, 'SIGTERM'
+    killGroup pid, 'SIGKILL'
+    console.log "[kill] SIGKILL sent to process group #{pid} (immediate kill -9)"
   catch err
     return sendJson res, 500,
       ok: false
       error: String(err?.message ? err)
-
-  setTimeout (->
-    try
-      # signal 0 = liveness probe; throws ESRCH when the pid is gone.
-      process.kill pid, 0
-      killGroup pid, 'SIGKILL'
-      console.log "[kill] pid #{pid} did not exit on SIGTERM within 1s; sent SIGKILL to process group"
-    catch
-      # process already gone — nothing to do.
-      null
-  ), 1000
 
   next = Object.assign {}, run,
     status: 'killing'
@@ -1996,6 +1981,29 @@ server = http.createServer (req, res) ->
         params_text = fs.readFileSync paramsFile, 'utf8'
       catch err
         paramsErr = String(err?.message ? err)
+    # 2026-09-07: liveness override. step-<name>.json is only rewritten
+    # when the runner exits cleanly. If the runner crashed / was killed
+    # mid-step, the file is left with status: 'running' forever. The
+    # UI keeps showing "running" even though the process is dead. Fix:
+    # check the parent runner's pid (from state/ui-run.json). If the
+    # pid is not alive and the step file says 'running', override the
+    # returned state to 'crashed_stale' so the UI is truthful. Leaves
+    # the on-disk file alone — the startup sweep in pipeline_runner
+    # will rewrite it to 'crashed' next run.
+    if state?.status is 'running'
+      try
+        runFile = path.join(CWD, 'state', 'ui-run.json')
+        if fs.existsSync runFile
+          runData = JSON.parse fs.readFileSync(runFile, 'utf8')
+          runPid = Number(runData?.pid ? 0)
+          if runPid > 0 and not isProcessAlive(runPid)
+            state = Object.assign {}, state,
+              status: 'crashed_stale'
+              liveness_override: true
+              liveness_note: "runner pid #{runPid} is dead; step file says 'running' but no process is alive. On-disk file will be rewritten on next run by startup sweep."
+              runner_pid: runPid
+      catch
+        null
     return sendJson res, 200,
       ok: true
       name: name
