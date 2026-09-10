@@ -475,16 +475,9 @@
 
     <div class="grid">
       <div class="column">
-        <section class="panel">
-          <h2>Pipeline Death</h2>
-          <div id="pipeline-death-box" class="death-box hidden">
-            <div id="pipeline-death-text" class="mono"></div>
-            <div class="button-row">
-              <button id="clear-pipeline-state-button" class="danger-button" type="button">Erase pipeline.json</button>
-            </div>
-          </div>
-          <div id="pipeline-death-empty" class="hint mono">no pipeline.json death message</div>
-        </section>
+        <!-- Named panel slot: panels with column: 'before-outputs'
+             land here. Currently: pipeline_death (framework tier). -->
+        <div id="dynamic-panels-before-outputs"></div>
 
         <section class="panel">
           <h2>Outputs</h2>
@@ -494,18 +487,10 @@
           <div id="out-files" class="files"></div>
         </section>
 
-        <section class="panel">
-          <h2>Diary Files</h2>
-          <div id="diary-files" class="files"></div>
-        </section>
+        <!-- Named panel slot: column: 'after-outputs'. Currently:
+             diary_files (project tier, applies() gates on diary/ dir). -->
+        <div id="dynamic-panels-after-outputs"></div>
 
-        <section class="panel" data-default-collapsed="1">
-          <h2>Logs</h2>
-          <div class="button-row">
-            <button id="clear-logs-button" class="danger-button" type="button">Delete Log Files</button>
-          </div>
-          <div id="log-files" class="files"></div>
-        </section>
 
         <section class="panel" data-default-collapsed="1">
           <h2>Run History</h2>
@@ -518,6 +503,17 @@
           </table>
           <div id="run-detail" class="hint mono" style="margin-top:8px; white-space:pre-wrap;"></div>
         </section>
+
+        <!-- Named panel slot: column: 'after-history'. Currently:
+             steps (framework tier). -->
+        <div id="dynamic-panels-after-history"></div>
+
+        <!-- Default sink for panels declaring column: 'left' (or no
+             column). Moved from the bottom-of-column to right after
+             the after-history slot so log_files lands next to steps
+             per the requested order (pipeline_death, outputs, diary,
+             run history, steps, logs, then everything else). -->
+        <div id="dynamic-panels"></div>
 
         <section class="panel" data-default-collapsed="1">
           <h2>Stories</h2>
@@ -552,15 +548,12 @@
           </table>
         </section>
 
-        <section class="panel">
-          <h2>Steps</h2>
-          <table class="steps">
-            <thead>
-              <tr><th>Step</th><th>Status</th><th>Elapsed</th><th>Updated</th></tr>
-            </thead>
-            <tbody id="steps-body"></tbody>
-          </table>
-        </section>
+        <!-- Steps moved to panel registry (2026-09-10). Uses
+             render_hint 'custom' so renderSteps' bespoke table
+             format survives (Elapsed formatter, status class hooks
+             for refreshPipelineGraph). Source:
+             ~/pipeline/panels/steps.coffee, client hook:
+             PANEL_CUSTOM_RENDERERS.steps below. -->
 
         <section class="panel">
           <h2>Latest Err</h2>
@@ -571,6 +564,10 @@
           <h2>Latest Log</h2>
           <pre id="latest-log"></pre>
         </section>
+
+        <!-- #dynamic-panels moved above (right after
+             #dynamic-panels-after-history) so log_files renders next
+             to steps per the requested ordering. -->
       </div>
 
       <div class="column">
@@ -785,6 +782,99 @@
       `).join('');
     }
 
+    // Panel names that already have a hardcoded section in this HTML.
+    // renderDynamicPanels() skips these so we don't double-render.
+    // As legacy sections migrate to the plugin surface, entries come
+    // out of this set. See ~/pipeline/GPT/ui/panels.md.
+    const LEGACY_RENDERED_PANELS = new Set([
+      // 'diary_files', 'log_files', 'pipeline_death', 'steps' all
+      // migrated 2026-09-10. log_files, pipeline_death, and steps use
+      // PANEL_CUSTOM_RENDERERS custom hooks so their bespoke buttons /
+      // table layout / graph-refresh linkage survive.
+    ]);
+
+    // Generic renderer for any panel that came through data.panels[]
+    // and isn't already handled by a hardcoded slot. Renders into
+    // #dynamic-panels according to the panel's render_hint. Called
+    // from refreshStatus after every /api/status response.
+    function renderDynamicPanels(data) {
+      const host = document.getElementById('dynamic-panels');
+      if (!host) return;
+      const panels = Array.isArray(data.panels) ? data.panels : [];
+      const dataByName = data.panels_data || {};
+
+      // Diff-friendly: keyed rebuild by panel name.
+      const seen = new Set();
+      for (const meta of panels) {
+        if (LEGACY_RENDERED_PANELS.has(meta.name)) continue;
+        seen.add(meta.name);
+        const slotId = `panel-slot-${meta.name}`;
+        let slot = document.getElementById(slotId);
+        if (!slot) {
+          slot = document.createElement('section');
+          slot.className = 'panel';
+          slot.id = slotId;
+          slot.dataset.panelName = meta.name;
+          slot.innerHTML = `<h2>${escapeHtml(meta.title || meta.name)}</h2><div class="panel-body"></div>`;
+          host.appendChild(slot);
+        }
+        const body = slot.querySelector('.panel-body');
+        const value = dataByName[meta.name];
+        renderPanelBody(body, meta, value);
+      }
+      // Remove slots for panels that vanished (e.g. a panel's applies() flipped false).
+      host.querySelectorAll('section[data-panel-name]').forEach((s) => {
+        if (!seen.has(s.dataset.panelName)) s.remove();
+      });
+    }
+
+    // Panel-body rendering by render_hint. Keep the vocabulary small
+    // and add here on-demand — a new render_hint requires this switch
+    // and (optionally) a matching applies() gate on the panel.
+    function renderPanelBody(target, meta, value) {
+      // Custom-hint panels always run their hook — lazy panels
+      // (eager: false) receive value == null on every /api/status
+      // refresh because their data isn't eagerly fetched. Their hook
+      // is responsible for its own data path.
+      if (meta.render_hint !== 'custom' && value == null) {
+        target.innerHTML = '<div class="hint mono">(no data)</div>';
+        return;
+      }
+      switch (meta.render_hint) {
+        case 'text':
+          target.innerHTML = `<div class="mono" style="white-space:pre-wrap;">${escapeHtml(String(value.text ?? value))}</div>`;
+          return;
+        case 'code':
+          target.innerHTML = `<pre>${escapeHtml(String(value.text ?? ''))}</pre>`;
+          return;
+        case 'key_value':
+          const items = Array.isArray(value.items) ? value.items : [];
+          target.innerHTML = items.length
+            ? `<dl class="kv">${items.map((i) => `<dt class="mono">${escapeHtml(i.key)}</dt><dd class="mono">${escapeHtml(String(i.value))}</dd>`).join('')}</dl>`
+            : '<div class="hint mono">(empty)</div>';
+          return;
+        case 'file_list':
+          if (typeof renderFiles === 'function') return renderFiles(target, value);
+          target.innerHTML = '<div class="hint mono">(file_list without renderer)</div>';
+          return;
+        case 'table':
+          const cols = Array.isArray(value.columns) ? value.columns : [];
+          const rows = Array.isArray(value.rows) ? value.rows : [];
+          target.innerHTML = cols.length
+            ? `<table class="steps"><thead><tr>${cols.map((c) => `<th>${escapeHtml(c.label || c.key)}</th>`).join('')}</tr></thead>`
+              + `<tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${escapeHtml(String(r[c.key] ?? ''))}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+            : '<div class="hint mono">(empty table)</div>';
+          return;
+        case 'custom':
+          const hook = window.PANEL_CUSTOM_RENDERERS && window.PANEL_CUSTOM_RENDERERS[meta.name];
+          if (typeof hook === 'function') return hook(target, value);
+          target.innerHTML = `<pre class="mono">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+          return;
+        default:
+          target.innerHTML = `<div class="hint mono">unknown render_hint: ${escapeHtml(meta.render_hint)}</div>`;
+      }
+    }
+
     function renderFiles(target, files) {
       if (!files || !files.length) {
         target.innerHTML = '<div class="mono">none</div>';
@@ -946,28 +1036,56 @@
 	      ].join('\n');
 	    }
 
-    function renderPipelineDeath(pipelineState) {
-      const box = byId('pipeline-death-box');
-      const empty = byId('pipeline-death-empty');
-      const text = byId('pipeline-death-text');
-      const clearButton = byId('clear-pipeline-state-button');
-      if (!pipelineState || !pipelineState.status) {
-        box.classList.add('hidden');
-        empty.style.display = 'block';
-        text.textContent = '';
-        clearButton.disabled = true;
+    // renderPipelineDeath removed 2026-09-10 — the section is now
+    // rendered by PANEL_CUSTOM_RENDERERS.pipeline_death below, driven
+    // by data.panels_data.pipeline_death from the panel registry.
+
+    // Custom-hint hooks for panels whose section contains interactive
+    // elements the generic renderers don't support. Each hook takes
+    // (target, value) — target is the <div class="panel-body"> inside
+    // the dynamic slot; value is whatever panels_data.<name> holds
+    // (or the response from /api/panel/<name>).
+    window.PANEL_CUSTOM_RENDERERS = window.PANEL_CUSTOM_RENDERERS || {};
+
+    window.PANEL_CUSTOM_RENDERERS.pipeline_death = function (target, value) {
+      if (!value || !value.has_death) {
+        target.innerHTML = '<div class="hint mono">no pipeline.json death message</div>';
         return;
       }
-      box.classList.remove('hidden');
-      empty.style.display = 'none';
-      clearButton.disabled = false;
-      text.textContent = [
-        `status: ${pipelineState.status || ''}`,
-        `by: ${pipelineState.by || ''}`,
-        `reason: ${pipelineState.reason || ''}`,
-        `timestamp: ${formatLocalTime(pipelineState.timestamp || '')}`
-      ].join('\n');
-    }
+      target.innerHTML =
+        `<div class="death-box">
+          <div class="mono">status: ${escapeHtml(value.status || '')}\nby: ${escapeHtml(value.by || '')}\nreason: ${escapeHtml(value.reason || '')}\ntimestamp: ${escapeHtml(formatLocalTime(value.timestamp || ''))}</div>
+          <div class="button-row">
+            <button class="danger-button" type="button" onclick="clearPipelineState().catch(console.error)">Erase pipeline.json</button>
+          </div>
+        </div>`;
+    };
+
+    window.PANEL_CUSTOM_RENDERERS.log_files = function (target, value) {
+      const files = value && Array.isArray(value.files) ? value.files : [];
+      target.innerHTML =
+        `<div class="button-row">
+          <button class="danger-button" type="button" onclick="clearLogs().catch(console.error)">Delete Log Files</button>
+        </div>
+        <div class="files" data-log-list></div>`;
+      renderFiles(target.querySelector('[data-log-list]'), files);
+    };
+
+    // Steps hook: reproduces the original bespoke table so
+    // formatElapsedSecMs + the status classes for refreshPipelineGraph
+    // keep working. The panel returns {rows: [<state/step-*.json rows>]}
+    // — the same shape data.steps used to have.
+    window.PANEL_CUSTOM_RENDERERS.steps = function (target, value) {
+      const rows = (value && Array.isArray(value.rows)) ? value.rows : [];
+      target.innerHTML =
+        `<table class="steps">
+          <thead><tr><th>Step</th><th>Status</th><th>Elapsed</th><th>Updated</th></tr></thead>
+          <tbody id="steps-body"></tbody>
+        </table>`;
+      renderSteps(rows);
+      // The pipeline_svg graph refresh reads the same rows.
+      refreshPipelineGraph(rows, window._lastOutFiles || []).catch(console.error);
+    };
 
     function collectUiValues() {
       const rows = {};
@@ -1331,17 +1449,20 @@
 	      renderKillButton(run);
 	      renderPipeControls(pipe);
 	      renderMergeStatus(mergeRun);
-	      renderPipelineDeath(pipelineState);
+      // renderPipelineDeath removed 2026-09-10 (panel registry).
       renderContinuous(data.controls || {});
       renderControls(data.controls || {});
       renderOverrideEditor(data.controls || {});
       renderFiles(byId('out-files'), data.out_files);
-      renderFiles(byId('diary-files'), data.diary_files);
-      renderFiles(byId('log-files'), data.log_files);
-      renderSteps(data.steps);
+      // log_files / steps renders moved to panel registry with custom
+      // hooks (2026-09-10). Cache out_files for the steps hook's
+      // graph refresh (needs both step rows and out_files).
+      window._lastOutFiles = data.out_files;
+      renderDynamicPanels(data);
       byId('latest-log').textContent = data.latest_log || '';
       byId('latest-err').textContent = data.latest_err || '';
-      refreshPipelineGraph(data.steps, data.out_files).catch(console.error);
+      // refreshPipelineGraph call moved into PANEL_CUSTOM_RENDERERS.steps
+      // (2026-09-10) — the steps rows come through panels_data now.
       // SQLite panels fire once per refresh tick. They're independent of the
       // /api/status payload — each issues its own request-keyed query.
       refreshSqlitePanels().catch((err) => console.error('[sqlite-panels]', err));
@@ -2147,12 +2268,10 @@
     byId('save-good-adapter-button').addEventListener('click', () => {
       saveGoodAdapter().catch(console.error);
     });
-    byId('clear-pipeline-state-button').addEventListener('click', () => {
-      clearPipelineState().catch(console.error);
-    });
-    byId('clear-logs-button').addEventListener('click', () => {
-      clearLogs().catch(console.error);
-    });
+    // clear-pipeline-state-button and clear-logs-button click handlers
+    // moved inline into PANEL_CUSTOM_RENDERERS.pipeline_death and .log_files
+    // (2026-09-10) — the buttons are now recreated on every panel render
+    // so a one-shot boot-time addEventListener would be silently orphaned.
     byId('clear-output-button').addEventListener('click', () => {
       clearOutput().catch(console.error);
     });

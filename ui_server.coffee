@@ -114,6 +114,50 @@ BASE = do ->
   if idx isnt -1 then EXEC_ROOT.slice(0, idx) else EXEC_ROOT
 
 PIPES_ROOT = path.join(BASE, 'pipes')
+
+# --- Panel registry (2026-09-09) ----------------------------------------
+# Plugin surface for project + framework UI sections. See
+# ~/pipeline/GPT/ui/panels.md. Each panel is a coffee file in
+# <BASE|EXEC>/panels/<name>.coffee (BASE wins on conflict). No CWD
+# tier: pipes in a project share one UI by design. `CWD` is still
+# passed through the ctx so panels can read pipe-local disk state.
+# Helpers get folded into every panel's ctx so panels don't each
+# redeclare listFiles/describeOutputFile/readJson.
+panelRegistry = null
+initPanelRegistry = ->
+  return panelRegistry if panelRegistry?
+  try
+    {load} = require path.join(EXEC_ROOT, 'panels')
+    panelRegistry = load
+      CWD:  CWD
+      BASE: BASE
+      EXEC: EXEC_ROOT
+      helpers:
+        listFiles:          listFiles
+        describeOutputFile: describeOutputFile
+        readJson:           readJson
+        readText:           readText
+    # Audit: dump the resolution table to params/_panels.yaml so a
+    # human sees which tier supplied each panel this session.
+    try
+      resolveRows = panelRegistry.resolution()
+      if resolveRows.length
+        yml = ({name, tier, path}) -> "- name: #{name}\n  tier: #{tier}\n  path: #{path}"
+        fs.mkdirSync path.join(CWD, 'params'), {recursive: true}
+        fs.writeFileSync path.join(CWD, 'params', '_panels.yaml'),
+          "# panel resolution table — CWD ↠ BASE ↠ EXEC\n#{(yml(r) for r in resolveRows).join('\n')}\n"
+    catch
+      null
+    console.log "[panels] registered #{panelRegistry.list().length} panel(s)"
+  catch err
+    console.error "[panels] registry init failed: #{String(err?.message ? err)}"
+    panelRegistry =
+      list: -> []
+      get: -> null
+      data: -> null
+      eager: -> {}
+      resolution: -> []
+  panelRegistry
 DEFAULT_KAG_KEYWORDS = [
   'joy'
   'contentment'
@@ -698,17 +742,10 @@ latestLogStem = ->
   ordered = Object.keys(stems).sort()
   ordered[ordered.length - 1]
 
-collectStepStates = ->
-  stateDir = path.join(CWD, 'state')
-  return [] unless fs.existsSync(stateDir)
-  names = fs.readdirSync(stateDir).filter (name) -> /^step-.*\.json$/.test(name)
-  rows = []
-  for name in names
-    row = readJson path.join(stateDir, name), {}
-    continue unless row?
-    rows.push row
-  rows.sort (a, b) ->
-    String(a.step ? '').localeCompare String(b.step ? '')
+# collectStepStates removed 2026-09-10 — migrated to
+# ~/pipeline/panels/steps.coffee (framework tier). The rich row shape
+# is preserved so ui/index.html's renderSteps + refreshPipelineGraph
+# work unchanged via the PANEL_CUSTOM_RENDERERS.steps hook.
 
 overridePathForPipeline = (pipelineName) ->
   name = String(pipelineName ? '').trim()
@@ -883,11 +920,14 @@ describeOutputFile = (relativePath, runStart = null) ->
   }
 
 collectExpectedOutputs = (run) ->
+  # Returns only `out_files` (recipe-declared `target:` artifacts).
+  # Diary files moved to the panel registry (2026-09-10) —
+  # ~/writer/panels/diary_files.coffee.
   controlOverride = readControlOverride()
   legacyOverride = readLegacyOverride()
   pipeline = controlOverride.pipeline ? legacyOverride.pipeline ? run?.pipeline ? null
   override = readOverride(pipeline)
-  return { out_files: [], diary_files: collectDiaryFiles(run) } unless pipeline?
+  return { out_files: [] } unless pipeline?
 
   configPath = resolveConfigPath(pipeline)
   recipe = readYaml(configPath)
@@ -908,39 +948,19 @@ collectExpectedOutputs = (run) ->
 
   outFiles.sort (a, b) -> String(a.path).localeCompare String(b.path)
 
-  {
-    out_files: outFiles
-    diary_files: collectDiaryFiles(run)
-  }
+  { out_files: outFiles }
 
-collectDiaryFiles = (run) ->
-  diaryDir = path.join(CWD, 'diary')
-  runStart = run?.started_at ? null
-  rows = []
-  return rows unless fs.existsSync(diaryDir)
-
-  for entry in listFiles(diaryDir) when entry? and entry.is_dir isnt true
-    rows.push describeOutputFile "diary/#{entry.name}", runStart
-
-  rows.sort (a, b) -> String(a.path).localeCompare String(b.path)
-  rows
-
-# Ported from writeStory main: lists files under `logs/`, marking
-# any updated since the current run started as "fresh". The frontend
-# uses this to render the "logs" panel.
-collectLogFiles = (run) ->
-  logDir = path.join(CWD, 'logs')
-  runStart = run?.started_at ? null
-  rows = []
-  return rows unless fs.existsSync(logDir)
-
-  for entry in listFiles(logDir) when entry? and entry.is_dir isnt true
-    rows.push describeOutputFile "logs/#{entry.name}", runStart
-
-  rows.sort (a, b) -> String(b.path).localeCompare String(a.path)
-  rows
+# collectDiaryFiles, collectLogFiles removed 2026-09-10 — migrated to
+# ~/writer/panels/diary_files.coffee and ~/pipeline/panels/log_files.coffee.
+# The panel registry (initPanelRegistry) populates data.panels_data.*
+# and renderDynamicPanels() in ui/index.html builds the UI section
+# from that. log_files uses render_hint 'custom' so its
+# "Delete Log Files" button is preserved via a PANEL_CUSTOM_RENDERERS
+# hook. See ~/pipeline/GPT/ui/panels.md.
 
 buildStatus = ->
+  # Async because panel endpoints may be async. The single caller
+  # (/api/status handler) awaits.
   run = normalizeUiRun readJson path.join(CWD, 'state', 'ui-run.json'), {}
   mergeRun = readMergeRun()
   pipelineState = readJson path.join(CWD, 'pipeline.json'), null
@@ -950,7 +970,7 @@ buildStatus = ->
   oracleRemaining = readJson path.join(CWD, 'out', 'oracle_remaining_count.json'), null
   storiesRemaining = if oracleRemaining? then oracleRemaining else loraRemaining
   events = readJsonlTail path.join(CWD, 'state', 'ui-events.jsonl')
-  steps = collectStepStates()
+  # steps moved to panel registry (2026-09-10) — data.panels_data.steps.rows.
   # Per-pipe env overrides (SESSION_API_MEM_CEIL_MB, etc). Written
   # by puppeteer's raise-ceiling action; applied by startRunner at
   # every subsequent spawn. Surface to the UI so humans can see
@@ -961,6 +981,14 @@ buildStatus = ->
   latestLog = if stem? then readText(path.join(CWD, 'logs', "#{stem}.log")) else ''
   latestErr = if stem? then readText(path.join(CWD, 'logs', "#{stem}.err")) else ''
 
+  # Panel registry — declaration list + eager-panel data. Legacy
+  # top-level fields (diary_files, log_files, out_files, …) stay
+  # populated during migration so existing HTML keeps rendering; each
+  # will move to panels_data.<name> in a later pass.
+  registry = initPanelRegistry()
+  panels = registry.list()
+  panels_data = await registry.eager {run}
+
   {
     run: run
     merge_run: mergeRun
@@ -970,15 +998,15 @@ buildStatus = ->
     oracle_remaining_count: oracleRemaining
     stories_remaining_count: storiesRemaining
     controls: buildControls()
-    steps: steps
+    # steps: removed 2026-09-10 — see panels_data.steps.rows
     events: events
     latest_log_stem: stem
     latest_log: latestLog
     latest_err: latestErr
     out_files: expectedOutputs.out_files
-    diary_files: expectedOutputs.diary_files
-    log_files: collectLogFiles(run)
     env_overrides: envOverrides
+    panels: panels
+    panels_data: panels_data
   }
 
 isAllowedFilePath = (relativePath) ->
@@ -1957,7 +1985,19 @@ server = http.createServer (req, res) ->
   if url is '/' or url is '/index.html'
     return sendHtml res, resolveUiAsset('index.html')
   if url is '/api/status'
-    return sendJson res, 200, buildStatus()
+    return Promise.resolve(buildStatus()).then (status) ->
+      sendJson res, 200, status
+    .catch (err) ->
+      sendJson res, 500, { ok: false, error: String(err?.message ? err) }
+  if url.startsWith '/api/panel/'
+    name = decodeURIComponent(url.slice('/api/panel/'.length).split('?')[0])
+    return Promise.resolve(initPanelRegistry().data(name, {run: normalizeUiRun(readJson(path.join(CWD, 'state', 'ui-run.json'), {}))})).then (data) ->
+      if data is null
+        sendJson res, 404, { ok: false, error: "panel not found or endpoint failed: #{name}" }
+      else
+        sendJson res, 200, { ok: true, name: name, data: data }
+    .catch (err) ->
+      sendJson res, 500, { ok: false, error: String(err?.message ? err) }
   if url.startsWith('/api/step_detail?')
     # Return the state file and params file for one step so the SVG
     # click-popup can show status + inputs and offer a restart button.

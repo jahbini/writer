@@ -1,0 +1,113 @@
+# =====================================================================
+#   heckled_story.yaml — layer hecklers over a prior story generation
+# =====================================================================
+#
+#   V1 (2026-09-10): post-processor. Reads an already-generated text
+#   artifact (typically out/diary_with_adapter.txt from a story.yaml
+#   run), splits it into sentences, and injects heckler lines at
+#   configurable sentence boundaries. The model that produced the
+#   source is NEVER re-invoked — hecklers are display-layer only
+#   (Statler & Waldorf mode). Output goes to a sibling artifact.
+#
+#   V2 (planned): streaming injection via session_api's token loop.
+#   Recipe stays the same shape; the step's implementation switches
+#   from "read + rewrite" to "invoke generate_stream + interleave."
+#   Optional 'aware: true' persona would re-prompt the model with
+#   the heckler line as an in-context turn (KV-cache append, no
+#   full re-prefill).
+#
+#   Prerequisites:
+#     - out/diary_with_adapter.txt (or another selected artifact)
+#       must already exist from a prior story.yaml run.
+#     - data/heckler_pool.yaml must exist (starter pool ships at
+#       writer BASE — see below).
+#
+#   To run:
+#     - Set the source artifact in an override:
+#         heckle_story:
+#           source_artifact: diary_without_adapter_text
+#     - Select this recipe (control_override.yaml pipeline: heckled_story).
+#     - Launch. The output artifact `story_heckled_text` is written to
+#       out/story_heckled.txt.
+
+run:
+  output_dir: out
+  data_dir: data
+  # `run.model` intentionally not set — this recipe does not invoke a
+  # model in V1. It's a text transform. V2 will make model_dir
+  # optional (only needed when `aware: true` personas want to
+  # generate reactions).
+
+artifacts:
+  # Source text — the diary/story pass this recipe layers on top of.
+  # Overridable per-pipe via `heckle_story.source_artifact`. Default
+  # points at the with-adapter diary output of story.yaml. Any file
+  # under out/ or build/ that is plain UTF-8 text will work.
+  diary_with_adapter_text:
+    source: out/diary_with_adapter.txt
+
+  # Heckler persona pool. YAML doc: {personas: {<name>: [<line>, ...]}}.
+  # See data/heckler_pool.yaml.
+  heckler_pool:
+    source: data/heckler_pool.yaml
+
+  # The transformed output. Original prose interleaved with heckler
+  # lines, each on its own bracketed line: [Statler] ...
+  story_heckled_text:
+    target: out/story_heckled.txt
+
+  # A machine-readable side channel — one row per injection point,
+  # keyed by (sentence_index, persona, line). Useful for tuning
+  # frequency and diagnosing where hecklers fired. Optional consumer;
+  # skip reading it if you don't care.
+  story_heckled_events:
+    target: out/story_heckled_events.jsonl
+
+heckle_story:
+  # This recipe has exactly one step. It reads a text artifact + a
+  # heckler pool, produces the interleaved output + an events log.
+  run: heckle_story.coffee
+  depends_on: []
+  needs: [diary_with_adapter_text, heckler_pool]
+  makes: [story_heckled_text, story_heckled_events]
+
+  # ------------------ knobs a human tunes -----------------------
+
+  # Which text artifact to heckle. Must be declared under artifacts:
+  # above (or in an override). Default is the with-adapter diary —
+  # the Jim-voice pass is more fun to heckle than the base pass.
+  source_artifact: diary_with_adapter_text
+
+  # Personas active for this run. Each name must be a key inside the
+  # heckler_pool's `personas:` map. UI dropdown lets you toggle a
+  # subset without editing the pool.
+  personas: [ UI_dropdown, personas_available, Statler+Waldorf ]
+
+  # Trigger rule: how often to fire a heckler. One of:
+  #   - `every_n_sentences`: fire after every Nth sentence (default 3)
+  #   - `every_paragraph`:   fire after every empty-line paragraph break
+  #   - `trigger_phrases`:   fire when the tail matches any of these
+  # For V1 mix-and-match isn't supported; pick one rule.
+  trigger_mode: [ UI_dropdown, [every_n_sentences, every_paragraph, trigger_phrases], every_n_sentences ]
+
+  # Config for each trigger_mode.
+  every_n_sentences: 3
+  every_paragraph:   true
+  trigger_phrases:   []   # e.g. ["some days", "the only mystery"]
+
+  # Cool-down: don't fire another heckler within this many words of
+  # the previous one, regardless of trigger. Prevents dogpile.
+  cooldown_words: 15
+
+  # Deterministic seed for the persona / line rotation. Set to null
+  # for random each run; set to an integer for reproducibility.
+  seed: 42
+
+  # If true, an interjection always alternates personas (Statler,
+  # then Waldorf, then Statler…). If false, one persona may fire
+  # twice in a row. `alternate: true` is the classic Muppet pattern.
+  alternate: true
+
+  # Whether to end with a "curtain" heckler line after the final
+  # sentence of the source text. Adds a natural bookend.
+  curtain: true
