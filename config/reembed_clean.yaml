@@ -1,25 +1,35 @@
 # =====================================================================
 #   reembed_clean.yaml  —  clean semantic re-embed of story chunks (for RAG)
 # =====================================================================
-#   One-time pass: re-embeds every story chunk's RAW text (no classification
-#   prompt) so RAG retrieval ranks by content instead of noise. Writes
-#   build/chunk_embeddings_clean.jsonl, which prompt_llm (rag_top_k > 0) then prefers over
-#   the contaminated kag_embeddings. Re-run only if the corpus changes.
+#   Re-embeds every story chunk's RAW text (no classification prompt) so
+#   RAG retrieval ranks by content instead of noise. As of 2026-09-11
+#   embeddings live in the sqlite `kag_embeddings_clean` table (was
+#   build/chunk_embeddings_clean.jsonl). Retrievers (prompt_llm with
+#   rag_top_k > 0) query the table via `kagAllCleanEmbeddings.jsonl`.
+#
+#   Pending-work list also comes from sqlite (view
+#   `storiesMissingCleanEmbeddings`), so oracle and reembed share the
+#   same source of truth — no file-based dedup, no cache-poisoning.
 
 run:
   model: Qwen/Qwen3-4B-Instruct-2507
   output_dir: out
   data_dir: data
 
-# The step writes build/chunk_embeddings_clean.jsonl itself (real JSONL via fs),
-# so there's no .jsonl artifact target here.
+artifacts:
+  # Batch progress signal — reembed_chunks_clean writes the count of
+  # stories still pending after the current batch. Puppeteer's queue
+  # driver reads this via the business-truth verifier.
+  reembed_remaining_count:
+    target: out/reembed_remaining_count.json
+
 reembed_chunks_clean:
   run: prompt_llm/reembed_chunks_clean.coffee
   depends_on: []
   needs: []
-  makes: []
-  # Match reset.yaml's convention. If the -mlx4 dir doesn't exist
-  # (quantize crashed and only the fallback symlink is present),
-  # the step now falls back to the raw fp16 dir automatically.
+  makes: [reembed_remaining_count]
   quantized_model_dir: ${MODELS}/${run.model}-mlx4
-  clean_embeddings_file: build/chunk_embeddings_clean.jsonl
+  # Batch size: matches oracle_ask_sqlite.batch_size so oracle and
+  # reembed march in lockstep — 4 stories oracled = 4 stories reembedded.
+  # A crash costs at most 4 stories of work in either step.
+  batch_size: 4

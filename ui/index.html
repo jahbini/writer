@@ -627,6 +627,7 @@
                 </select>
               </label>
               <button id="launch-button" type="button">Write Override And Run</button>
+              <button id="continue-button" type="button" title="Resume the current recipe without clobbering step-state or override — pending UI edits are ignored, previously-completed steps are skipped, and a failed step retries." style="background:#4a6fa5;color:#fff;">Continue Run</button>
               <button id="kill-button" type="button">Kill Run</button>
               <button id="save-good-adapter-button" type="button" style="margin-top:6px; background:#3d7a45; color:#fff;">Save Good Adapter</button>
               <div id="launch-result" class="hint mono"></div>
@@ -1083,9 +1084,13 @@
           <tbody id="steps-body"></tbody>
         </table>`;
       renderSteps(rows);
-      // The pipeline_svg graph refresh reads the same rows.
       refreshPipelineGraph(rows, window._lastOutFiles || []).catch(console.error);
     };
+
+    // (2026-09-12: removed the achievement_test panel renderer + its
+    // POST /api/achievement_grade handler — the whole design was
+    // pulled in favor of human-driven SAT-state testing via the
+    // augmented storacle recipe.)
 
     function collectUiValues() {
       const rows = {};
@@ -1724,6 +1729,43 @@
 	      }
 	    }
 
+    // Resume the current recipe without touching step-*.json,
+    // pipeline.json, or control_override.yaml. Pending UI edits are
+    // IGNORED — the runner picks up on-disk state as-is. Use when a
+    // step failed mid-recipe and you want to retry from that step
+    // (pipeline_runner's startup restore skips done steps and picks
+    // up at the first not-done one).
+    async function continuePipeline() {
+      if (launchBusy) return;
+      launchBusy = true;
+      startRefreshLoop();
+      const continueButton = byId('continue-button');
+      const launchButton = byId('launch-button');
+      const result = byId('launch-result');
+      continueButton.disabled = true;
+      launchButton.disabled = true;
+      result.textContent = 'continuing...';
+      byId('latest-log').textContent = '';
+      byId('latest-err').textContent = '';
+      try {
+        const res = await fetch('/api/launch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ continue: true })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'continue failed');
+        result.textContent = `pid ${data.pid}  pipeline ${data.override?.pipeline || ''} (continue mode — step state preserved)`;
+        await refresh();
+      } catch (err) {
+        result.textContent = 'continue error: ' + String(err.message || err);
+      } finally {
+        launchBusy = false;
+        continueButton.disabled = false;
+        launchButton.disabled = false;
+      }
+    }
+
     async function launchPipeline() {
       if (launchBusy) return;
       launchBusy = true;
@@ -2261,6 +2303,9 @@
     });
     byId('launch-button').addEventListener('click', () => {
       launchPipeline().catch(console.error);
+    });
+    byId('continue-button').addEventListener('click', () => {
+      continuePipeline().catch(console.error);
     });
     byId('kill-button').addEventListener('click', () => {
       killPipeline().catch(console.error);

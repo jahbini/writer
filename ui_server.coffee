@@ -1408,34 +1408,59 @@ handleLaunch = (req, res) ->
   catch
     return sendJson res, 400, { ok: false, error: 'invalid json body' }
 
+  # 2026-09-11: `continue: true` means "resume where we left off" —
+  # do NOT clobber step-*.json / pipeline.json / control_override.yaml.
+  # The runner picks the current on-disk pipeline + step state as-is,
+  # which lets a failed step retry without redoing the whole recipe.
+  # Pending UI edits are IGNORED in continue mode: the button is for
+  # resuming, not for applying new params.
+  continueMode = payload.continue is true or payload.resume is true
+
   pipeline = String(payload.pipeline ? '').trim()
-  return sendJson(res, 400, { ok: false, error: 'pipeline is required' }) unless pipeline.length
+  # In continue mode, allow an empty pipeline — the on-disk override
+  # already names the recipe. Otherwise, pipeline is required.
+  return sendJson(res, 400, { ok: false, error: 'pipeline is required' }) unless continueMode or pipeline.length
 
-  writeUiControl
-    pending:
-      pipeline: pipeline
-      scene: payload.scene ? ''
-      arrival: payload.arrival ? ''
-      disturbance: payload.disturbance ? ''
-      reflection: payload.reflection ? ''
-      realization: payload.realization ? ''
-    ui_values: if payload.ui_values? and typeof payload.ui_values is 'object' then payload.ui_values else {}
-
-  if payload.continuous is true
-    repeatLoop.enabled = true
-    repeatLoop.payload = Object.assign {}, payload
-    repeatLoop.delay_seconds = normalizeCooldownSeconds(payload.continuous_delay_seconds, 60)
+  unless continueMode
     writeUiControl
-      continuous: true
-      continuous_delay_seconds: repeatLoop.delay_seconds
-  else
-    stopRepeatLoop()
-  overrideText = if typeof payload.control_override_text is 'string' and payload.control_override_text.trim().length
-    payload.control_override_text
-  else
-    dumpYaml buildOverrideObject(payload)
-  writeUiControl control_override_text: overrideText
-  override = writeControlOverrideText overrideText
+      pending:
+        pipeline: pipeline
+        scene: payload.scene ? ''
+        arrival: payload.arrival ? ''
+        disturbance: payload.disturbance ? ''
+        reflection: payload.reflection ? ''
+        realization: payload.realization ? ''
+      ui_values: if payload.ui_values? and typeof payload.ui_values is 'object' then payload.ui_values else {}
+
+    if payload.continuous is true
+      repeatLoop.enabled = true
+      repeatLoop.payload = Object.assign {}, payload
+      repeatLoop.delay_seconds = normalizeCooldownSeconds(payload.continuous_delay_seconds, 60)
+      writeUiControl
+        continuous: true
+        continuous_delay_seconds: repeatLoop.delay_seconds
+    else
+      stopRepeatLoop()
+
+  # In continue mode, don't rewrite control_override — reuse the
+  # existing file so the runner reads the exact same recipe/params
+  # the previous attempt used.
+  override =
+    if continueMode
+      # Read what's already there so the response can report it.
+      try
+        text = fs.readFileSync(CONTROL_OVERRIDE_PATH, 'utf8')
+        writeUiControl control_override_text: text
+        yaml.load(text) ? {}
+      catch
+        {}
+    else
+      overrideText = if typeof payload.control_override_text is 'string' and payload.control_override_text.trim().length
+        payload.control_override_text
+      else
+        dumpYaml buildOverrideObject(payload)
+      writeUiControl control_override_text: overrideText
+      writeControlOverrideText overrideText
   attachedRun = findActiveWorkspaceRun()
   if attachedRun?
     writeUiRunPatch
@@ -1452,7 +1477,9 @@ handleLaunch = (req, res) ->
       logdir: attachedRun.logdir ? null
       override: override
 
-  clearStepState()
+  # In continue mode, preserve step-*.json + pipeline.json so the
+  # runner resumes at the first not-done step.
+  clearStepState() unless continueMode
   launch = startRunner()
   seedUiRun launch, override
   writeUiRunPatch
