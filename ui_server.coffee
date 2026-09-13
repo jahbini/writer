@@ -2016,6 +2016,60 @@ server = http.createServer (req, res) ->
       sendJson res, 200, status
     .catch (err) ->
       sendJson res, 500, { ok: false, error: String(err?.message ? err) }
+  if url is '/api/find_active_runner'
+    # 2026-09-13: scan every pipe's state/ui-run.json for a runner whose
+    # pid is alive. Powers the "Attach to Running Pipeline" button —
+    # when a pipeline_runner is chewing on some pipe but the UI is
+    # switched to a different one, the human clicks the button and
+    # jumps straight to the live pipe. Returns the first live match
+    # (there SHOULD be at most one runner per host).
+    try
+      matches = []
+      for name in listPipeDirectories()
+        runPath = path.join(PIPES_ROOT, name, 'state', 'ui-run.json')
+        continue unless fs.existsSync(runPath)
+        try
+          raw = readJson(runPath, {})
+          pid = Number(raw?.pid ? 0)
+          continue unless pid > 0 and isProcessAlive(pid)
+          # Skip the currently-active pipe from the "attach" suggestion
+          # since the user is already looking at it.
+          matches.push
+            pipe:   name
+            pid:    pid
+            status: raw?.status ? null
+            hh_mm:  raw?.hh_mm ? null
+            logdir: raw?.logdir ? null
+            pipeline: raw?.pipeline ? null
+            is_current: name is workspacePipeName(CWD)
+        catch
+          continue
+      return sendJson res, 200, { ok: true, matches: matches }
+    catch err
+      return sendJson res, 500, { ok: false, error: String(err?.message ? err) }
+  if url is '/api/adapters'
+    # 2026-09-13: list every adapter usable by this pipe. Powers the
+    # RUN-section dropdown that answers "does this pipe actually have
+    # a trained adapter?" at a glance. Same underlying source as the
+    # UI_dropdown('adapters') mechanism used by storacle etc., but
+    # exposed as a standalone endpoint so the RUN panel can show it
+    # regardless of which recipe is selected.
+    try
+      options = loadDropdownOptions('adapters')
+      checkpointIters = []
+      for opt in options when typeof opt?.label is 'string'
+        m = opt.label.match /@(\d+)/
+        checkpointIters.push Number(m[1]) if m
+      topIter = if checkpointIters.length then Math.max(checkpointIters...) else null
+      trainedOptions = options.filter (o) -> o? and o.key? and o.key.length > 0
+      hasTrained = trainedOptions.length > 0
+      summary =
+        has_trained: hasTrained
+        top_iter:    topIter
+        count:       trainedOptions.length
+      return sendJson res, 200, { ok: true, adapters: options, summary: summary }
+    catch err
+      return sendJson res, 500, { ok: false, error: String(err?.message ? err) }
   if url.startsWith '/api/panel/'
     name = decodeURIComponent(url.slice('/api/panel/'.length).split('?')[0])
     return Promise.resolve(initPanelRegistry().data(name, {run: normalizeUiRun(readJson(path.join(CWD, 'state', 'ui-run.json'), {}))})).then (data) ->
