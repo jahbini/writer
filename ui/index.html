@@ -611,10 +611,10 @@
             <div class="controls-group">
               <h3>Run</h3>
               <!-- 2026-09-13 layout — reading order (top → bottom):
-                   Last Run status → Recipe Selector → Restart toggle →
+                   Previous Run status → Recipe Selector → Restart toggle →
                    Cooldown → Write Override / Continue / Kill →
                    Available Adapters → Save Good Adapter.
-                   Rationale: humans read the outcome of the last run
+                   Rationale: humans read the outcome of the previous run
                    first, then decide what to do next; adapter picker
                    sits just above Save Good Adapter because those two
                    deal with the same artifact. -->
@@ -632,10 +632,10 @@
               </button>
               <div id="attach-runner-hint" class="hint mono" style="min-height:1em;"></div>
 
-              <!-- Last Run summary — populated by refresh() via
+              <!-- Previous Run summary — populated by refresh() via
                    renderKV(byId('run-kv'), …). Shows recipe / pipe /
                    status / hh_mm / logdir of the run just observed. -->
-              <div class="hint" style="margin-top:2px;">Last Run</div>
+              <div class="hint" style="margin-top:2px;">Previous Run</div>
               <div id="run-kv" class="kv"></div>
 
               <label style="display:block;margin-top:8px;">
@@ -664,18 +664,42 @@
               <!-- 2026-09-13: Available Adapters dropdown. Sourced from
                    /api/adapters. Same option shape as the per-recipe
                    `adapter_path` picker used by diary_ite / storacle /
-                   generate_prompt_gypsy_ite — this becomes the shared
-                   picker they all read from. The "(base — no adapter)"
-                   sentinel is always the first option and is always
-                   selectable, even when trained adapters exist. -->
+                   generate_prompt_gypsy_ite.
+                   2026-09-15: promoted from informational-only to the
+                   SHARED source of truth for the storacle recipe.
+                   `class="ui-dropdown"` + `data-path="storacle.adapter_path"`
+                   makes `collectUiValues()` treat it like any other
+                   step-scoped dropdown, so storacle launches use the
+                   value chosen here. The per-recipe adapter_path
+                   dropdown in storacle.yaml was removed on the same
+                   date so only this picker appears. Other recipes
+                   (diary_ite, prompt_llm) still declare their own for
+                   now — extend `data-path` above when consolidating. -->
               <label style="display:block;margin-top:8px;">
                 Available Adapters
-                <select id="available-adapters-select"></select>
+                <select id="available-adapters-select" class="ui-dropdown" data-path="storacle.adapter_path"></select>
               </label>
               <div id="available-adapters-hint" class="hint mono" style="min-height:1em;"></div>
 
               <button id="save-good-adapter-button" type="button" style="margin-top:6px; background:#3d7a45; color:#fff;">Save Good Adapter</button>
               <div id="save-good-adapter-result" class="hint mono"></div>
+
+              <!-- 2026-09-15: Storacle Observation capture. After a
+                   storacle run finishes, click this to snapshot the
+                   previous generation into runtime.sqlite with full
+                   provenance (prompt, llm config, adapter, story,
+                   generated text). Empty notes to start; edit in
+                   the "Captured Observations" list below. Design
+                   at ~/writer/GPT/storacle_observations.md. -->
+              <button id="save-observation-button" type="button" style="margin-top:10px; background:#5c6bc0; color:#fff;">📝 Save Observation of Previous Storacle Run</button>
+              <div id="save-observation-result" class="hint mono"></div>
+            </div>
+
+            <div class="controls-group">
+              <h3>Captured Observations</h3>
+              <div id="storacle-observations-list" class="mono" style="max-height:600px; overflow-y:auto; font-size:0.85em;">
+                <div class="hint">(none yet — click "Save Observation" after a storacle run to capture)</div>
+              </div>
             </div>
 
             <div class="controls-group">
@@ -995,6 +1019,19 @@
             </div>
           `;
         }
+        if (field.type === 'number') {
+          // 2026-09-15: numeric input for llm knobs. Uses type="number"
+          // so browsers give up/down arrows and reject non-numeric input.
+          // `step="any"` allows decimals (temperatures like 0.7, penalties
+          // like 1.15). collectUiValues() coerces to Number below.
+          const numValue = (typeof field.value === 'number' && Number.isFinite(field.value)) ? field.value : (field.default_value ?? 0);
+          return `
+            <label class="checkbox-row">
+              <span class="mono" style="min-width:14em;display:inline-block;">${field.label}</span>
+              <input type="number" step="any" class="ui-number" data-path="${field.path}" value="${numValue}">
+            </label>
+          `;
+        }
         return '';
       }).join('');
 
@@ -1106,6 +1143,71 @@
         </div>`;
     };
 
+    // 2026-09-14: SAT Generations panel. `value` shape:
+    //   { runs: [ { timestamp, files: [ { label, config, prompt,
+    //                                     size, mtime, content, truncated } ] } ] }
+    // Renders each SAT run as an expandable <details> block. Inside,
+    // each generation gets a card showing its (config, prompt) label
+    // and the text output. Text is preformatted in mono to preserve
+    // the model's line breaks; overflow scrolls locally so the panel
+    // doesn't take over the page.
+    //
+    // 2026-09-14 rev: preserve <details> open/closed state across the
+    // 2-second /api/status refresh cycle. Without this, every poll
+    // rebuilds innerHTML and every user-opened section snaps closed —
+    // makes inspection during a running SAT impossible. We tag each
+    // <details> with data-sat-run=<timestamp>, capture the open state
+    // per run before rebuilding, then reapply after innerHTML swap.
+    window.PANEL_CUSTOM_RENDERERS.sat_generations = function (target, value) {
+      const runs = (value && Array.isArray(value.runs)) ? value.runs : [];
+      if (!runs.length) {
+        target.innerHTML = '<div class="hint mono">(no SAT runs yet)</div>';
+        return;
+      }
+
+      // Capture existing open/closed state before we rebuild.
+      const openState = new Map();
+      target.querySelectorAll('details[data-sat-run]').forEach(el => {
+        openState.set(el.getAttribute('data-sat-run'), el.open);
+      });
+      const isFirstRender = openState.size === 0;
+
+      const humanBytes = (n) => n < 1024 ? `${n}B` : `${(n/1024).toFixed(1)}KB`;
+      const runHtml = runs.map((run, i) => {
+        const files = Array.isArray(run.files) ? run.files : [];
+        const summary = `<summary style="cursor:pointer;padding:4px 8px;font-family:monospace;background:rgba(120,120,120,0.08);">${escapeHtml(run.timestamp)} <span class="hint">(${files.length} file${files.length===1?'':'s'})</span></summary>`;
+        const cards = files.map(f => {
+          const trunc = f.truncated ? ' <span class="hint">(truncated)</span>' : '';
+          const cfgTag = f.config ? `<span style="background:#4a6fa5;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em;">${escapeHtml(f.config)}</span>` : '';
+          const prTag  = f.prompt ? `<span style="background:#3d7a45;color:white;padding:1px 6px;border-radius:3px;font-size:0.85em;">${escapeHtml(f.prompt)}</span>` : '';
+          return `
+            <div style="margin:8px 0;padding:6px 8px;border:1px solid rgba(120,120,120,0.25);border-radius:4px;">
+              <div style="margin-bottom:4px;font-family:monospace;font-size:0.9em;">
+                ${cfgTag} ${prTag}
+                <span class="hint" style="margin-left:8px;">${humanBytes(f.size||0)}${trunc}</span>
+              </div>
+              <div class="mono" style="white-space:pre-wrap;background:rgba(120,120,120,0.06);padding:6px;border-radius:3px;max-height:320px;overflow:auto;font-size:0.85em;line-height:1.35;">${escapeHtml(f.content || '')}</div>
+            </div>
+          `;
+        }).join('');
+        // Open decision:
+        //   * If we've seen this run in a prior render → honor whatever
+        //     the user did (open/closed).
+        //   * If this is the very first render for this pipe → default
+        //     the newest run open, everything else closed.
+        //   * If this run appeared after the panel already loaded (a
+        //     brand-new timestamp) → default closed so the user's focus
+        //     on an existing run isn't disrupted.
+        const priorState = openState.get(run.timestamp);
+        const isOpen = priorState !== undefined
+          ? priorState
+          : (isFirstRender && i === 0);
+        const openAttr = isOpen ? 'open' : '';
+        return `<details ${openAttr} data-sat-run="${escapeHtml(run.timestamp)}" style="margin:6px 0;border:1px solid rgba(120,120,120,0.15);border-radius:4px;">${summary}<div style="padding:4px 8px 8px 8px;">${cards}</div></details>`;
+      }).join('');
+      target.innerHTML = runHtml;
+    };
+
     window.PANEL_CUSTOM_RENDERERS.log_files = function (target, value) {
       const files = value && Array.isArray(value.files) ? value.files : [];
       target.innerHTML =
@@ -1152,6 +1254,20 @@
         const path = node.getAttribute('data-path');
         if (!path) return;
         rows[path] = node.value;
+      });
+      // 2026-09-15: numeric inputs coerced to Number. Empty / NaN
+      // falls back to null so setByPath deletes the override (=
+      // recipe default kicks in) rather than writing "NaN".
+      document.querySelectorAll('.ui-number').forEach((node) => {
+        const path = node.getAttribute('data-path');
+        if (!path) return;
+        const raw = node.value;
+        if (raw === '' || raw == null) {
+          rows[path] = null;
+          return;
+        }
+        const num = Number(raw);
+        rows[path] = Number.isFinite(num) ? num : null;
       });
       return rows;
     }
@@ -1576,6 +1692,7 @@
       // whole status panel.
       refreshAvailableAdapters();
       refreshAttachRunner();
+      refreshStoracleObservations();
       // Page title: "Pipeline Monitor for <project> (<pipe>)" so the human
       // sees at a glance which BASE and which active pipe they're driving.
       const ws = data.workspace || {};
@@ -1655,7 +1772,7 @@
       if (!container) return;
       // If the Recipe Selector picked a specific recipe, preview
       // THAT recipe's graph directly (from its config), not the
-      // last-run's experiment.yaml. Lets you inspect a recipe
+      // previous run's experiment.yaml. Lets you inspect a recipe
       // before pressing Write Override and Run.
       const selectedPipeline = byId('pipeline-select')?.value || '';
       const graphUrl = selectedPipeline
@@ -2122,6 +2239,122 @@
       }
     }
 
+    // 2026-09-15: Storacle observation capture + list. See
+    // ~/writer/GPT/storacle_observations.md for design.
+    // Capture reads out/storacle_meta.json + out/storacle.txt on the
+    // server side; here we just POST, then refresh the list.
+    async function saveStoracleObservation() {
+      const result = byId('save-observation-result');
+      result.textContent = 'capturing…';
+      try {
+        const res = await fetch('/api/storacle_observation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ noted_by: window.CURRENT_USER || null })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'capture failed');
+        result.textContent = `captured observation #${data.id} at ${data.observed_at}`;
+        await refreshStoracleObservations();
+      } catch (err) {
+        result.textContent = `capture failed: ${String(err?.message || err)}`;
+      }
+    }
+
+    async function refreshStoracleObservations() {
+      const target = byId('storacle-observations-list');
+      if (!target) return;
+      try {
+        const res = await fetch('/api/storacle_observations', { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'list failed');
+        const obs = Array.isArray(data.observations) ? data.observations : [];
+        if (!obs.length) {
+          target.innerHTML = '<div class="hint">(none yet — click "Save Observation" after a storacle run to capture)</div>';
+          return;
+        }
+        // Preserve any in-flight note-edits by keying on data-obs-id
+        // — the render only overwrites textareas that aren't currently
+        // being edited.
+        const focused = document.activeElement;
+        const focusedObsId = (focused && focused.classList?.contains('obs-notes'))
+          ? focused.getAttribute('data-obs-id') : null;
+        target.innerHTML = obs.map((o) => renderObservationRow(o, focusedObsId)).join('');
+        target.querySelectorAll('.obs-notes').forEach((node) => {
+          node.addEventListener('blur', () => saveObservationNote(node).catch(console.error));
+        });
+        target.querySelectorAll('.obs-save-btn').forEach((node) => {
+          node.addEventListener('click', (event) => {
+            const id = event.target.getAttribute('data-obs-id');
+            const textarea = target.querySelector(`.obs-notes[data-obs-id="${id}"]`);
+            if (textarea) saveObservationNote(textarea).catch(console.error);
+          });
+        });
+      } catch (err) {
+        target.innerHTML = `<div class="hint" style="color:#c00;">list failed: ${String(err?.message || err)}</div>`;
+      }
+    }
+
+    function renderObservationRow(obs, focusedObsId) {
+      const cfg = obs.llm_config || {};
+      const tags = [];
+      if (cfg.temperature != null) tags.push(`temp=${cfg.temperature}`);
+      if (cfg.topP != null) tags.push(`topP=${cfg.topP}`);
+      if (cfg.repetition_penalty != null) tags.push(`rep=${cfg.repetition_penalty}`);
+      if (cfg.presence_penalty != null) tags.push(`pres=${cfg.presence_penalty}`);
+      if (cfg.maxTokens != null) tags.push(`max=${cfg.maxTokens}`);
+      if (obs.use_kag) tags.push('kag');
+      if (obs.use_chunks) tags.push(`chunks(top-${obs.rag_top_k || '?'})`);
+      tags.push(obs.adapter_path ? `adapter=${obs.adapter_path}` : 'base');
+      if (obs.lora_run_id) tags.push(`lora=${obs.lora_run_id.slice(-16)}`);
+      const tagLine = tags.map((t) => `<span style="background:#e0e4ea;padding:1px 5px;margin-right:4px;border-radius:3px;">${escapeHtml(t)}</span>`).join('');
+      const prompt = obs.prompt_text || '';
+      const generated = obs.generated_text || '';
+      const isFocused = focusedObsId === String(obs.id);
+      const notesValue = isFocused ? undefined : (obs.notes || '');
+      return `
+        <details style="border:1px solid #ccc;border-radius:4px;margin-bottom:8px;padding:6px;">
+          <summary style="cursor:pointer;">
+            <b>#${obs.id}</b> · ${escapeHtml(obs.observed_at)}
+            · ${escapeHtml(obs.story_id || '(no story)')}
+            · <span style="color:${obs.notes ? '#080' : '#a60'};">notes ${obs.notes ? '✓' : '(empty)'}</span>
+          </summary>
+          <div style="margin-top:6px;">${tagLine}</div>
+          <details style="margin-top:6px;"><summary style="cursor:pointer;font-size:0.85em;color:#666;">prompt (${prompt.length} chars)</summary>
+            <pre style="white-space:pre-wrap;background:#f6f6f6;padding:6px;font-size:0.85em;max-height:200px;overflow-y:auto;">${escapeHtml(prompt)}</pre>
+          </details>
+          <details open style="margin-top:6px;"><summary style="cursor:pointer;font-size:0.85em;color:#666;">generated (${generated.length} chars)</summary>
+            <pre style="white-space:pre-wrap;background:#fafaf5;padding:6px;font-size:0.85em;max-height:300px;overflow-y:auto;">${escapeHtml(generated)}</pre>
+          </details>
+          <label style="display:block;margin-top:6px;">
+            <div style="font-size:0.85em;color:#333;margin-bottom:2px;">Notes (freeform; helper corpus material):</div>
+            <textarea class="obs-notes" data-obs-id="${obs.id}" rows="4" style="width:98%;font-family:inherit;font-size:0.9em;">${notesValue != null ? escapeHtml(notesValue) : ''}</textarea>
+          </label>
+          <button type="button" class="obs-save-btn" data-obs-id="${obs.id}" style="margin-top:4px;">Save Notes</button>
+          <span class="obs-save-status" data-obs-id="${obs.id}" style="margin-left:8px;font-size:0.85em;color:#666;"></span>
+        </details>
+      `;
+    }
+
+    async function saveObservationNote(textarea) {
+      const id = textarea.getAttribute('data-obs-id');
+      const notes = textarea.value;
+      const status = document.querySelector(`.obs-save-status[data-obs-id="${id}"]`);
+      if (status) status.textContent = 'saving…';
+      try {
+        const res = await fetch('/api/storacle_observation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: Number(id), notes: notes, noted_by: window.CURRENT_USER || null })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'save failed');
+        if (status) status.textContent = `saved ${data.updated_at}`;
+      } catch (err) {
+        if (status) { status.style.color = '#c00'; status.textContent = String(err?.message || err); }
+      }
+    }
+
     async function shutdownUi() {
       const result = byId('launch-result');
       try {
@@ -2480,6 +2713,9 @@
     });
     byId('save-good-adapter-button').addEventListener('click', () => {
       saveGoodAdapter().catch(console.error);
+    });
+    byId('save-observation-button').addEventListener('click', () => {
+      saveStoracleObservation().catch(console.error);
     });
     // clear-pipeline-state-button and clear-logs-button click handlers
     // moved inline into PANEL_CUSTOM_RENDERERS.pipeline_death and .log_files

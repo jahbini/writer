@@ -607,6 +607,26 @@ scanUiFields = (recipe, valueSource, uiControl, extraDirectiveSources = []) ->
           type: 'textarea'
           default_value: defaultValue
           value: chosenValue
+      else if directive is 'UI_number'
+        # 2026-09-15: numeric input for llm knobs (temperature, topP,
+        # repetition_penalty, etc.). `[ UI_number, default ]` — the
+        # default is preserved as a JS number and shipped as `Number`
+        # in the payload so downstream consumers get numeric types,
+        # not stringified numbers.
+        defaultValue = if node.length >= 2 then Number(node[1]) else 0
+        defaultValue = 0 unless Number.isFinite(defaultValue)
+        chosenValue = if Object::hasOwnProperty.call(pendingUi, prefix)
+          coerced = Number(pendingUi[prefix])
+          if Number.isFinite(coerced) then coerced else defaultValue
+        else
+          overrideValue = getByPath override, prefix
+          if typeof overrideValue is 'number' and Number.isFinite(overrideValue) then overrideValue else defaultValue
+        pushRow
+          path: prefix
+          label: buildLabel(prefix)
+          type: 'number'
+          default_value: defaultValue
+          value: chosenValue
       return
 
     return unless not Array.isArray(node)
@@ -2070,6 +2090,185 @@ server = http.createServer (req, res) ->
       return sendJson res, 200, { ok: true, adapters: options, summary: summary }
     catch err
       return sendJson res, 500, { ok: false, error: String(err?.message ? err) }
+  # 2026-09-15: schema for storacle_observations. Kept here as the
+  # writer's local safety net so the /api/storacle_observation* routes
+  # work even on pipes whose sqlite predates the meta-init that
+  # normally creates the table. Idempotent — CREATE IF NOT EXISTS.
+  ensureStoracleObservationsTable = (db) ->
+    db.exec """
+      CREATE TABLE IF NOT EXISTS storacle_observations (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        observed_at       TEXT NOT NULL,
+        updated_at        TEXT NOT NULL,
+        storacle_logdir   TEXT,
+        adapter_path      TEXT,
+        lora_run_id       TEXT,
+        adapter_mtime     TEXT,
+        story_id          TEXT,
+        prompt_text       TEXT,
+        think_prefill     TEXT,
+        use_kag           INTEGER,
+        use_chunks        INTEGER,
+        rag_top_k         INTEGER,
+        llm_config_json   TEXT,
+        generated_text    TEXT,
+        notes             TEXT,
+        noted_by          TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_storacle_observations_observed_at
+        ON storacle_observations (observed_at);
+    """
+
+  if url is '/api/storacle_observations'
+    # 2026-09-15: list all storacle observations captured on this pipe.
+    # Ordered newest first (matches user's reading order — recent runs
+    # are what they're actively evaluating). See
+    # ~/writer/GPT/storacle_observations.md for design.
+    dbPath = path.join CWD, 'runtime.sqlite'
+    unless fs.existsSync dbPath
+      return sendJson res, 200, { ok: true, observations: [] }
+    db = null
+    try
+      db = new DatabaseSync dbPath
+      ensureStoracleObservationsTable db
+      rows = db.prepare("""
+        SELECT id, observed_at, updated_at, storacle_logdir,
+               adapter_path, lora_run_id, adapter_mtime, story_id,
+               prompt_text, think_prefill, use_kag, use_chunks,
+               rag_top_k, llm_config_json, generated_text, notes,
+               noted_by
+        FROM storacle_observations
+        ORDER BY observed_at DESC
+      """).all()
+      observations = rows.map (row) ->
+        llmConfig = null
+        try llmConfig = JSON.parse(row.llm_config_json ? 'null') catch then null
+        {
+          id:              row.id
+          observed_at:     row.observed_at
+          updated_at:      row.updated_at
+          storacle_logdir: row.storacle_logdir
+          adapter_path:    row.adapter_path
+          lora_run_id:     row.lora_run_id
+          adapter_mtime:   row.adapter_mtime
+          story_id:        row.story_id
+          prompt_text:     row.prompt_text
+          think_prefill:   row.think_prefill
+          use_kag:         row.use_kag is 1
+          use_chunks:      row.use_chunks is 1
+          rag_top_k:       row.rag_top_k
+          llm_config:      llmConfig
+          generated_text:  row.generated_text
+          notes:           row.notes
+          noted_by:        row.noted_by
+        }
+      return sendJson res, 200, { ok: true, observations: observations }
+    catch err
+      return sendJson res, 500, { ok: false, error: String(err?.message ? err) }
+    finally
+      try db?.close() catch then null
+
+  if url is '/api/storacle_observation' and req.method is 'POST'
+    # Two modes:
+    #   1. Create — no `id` in body. Reads out/storacle_meta.json +
+    #      out/storacle.txt for provenance, INSERTs a new row with
+    #      empty notes.
+    #   2. Update — body has `id`. UPDATEs notes/noted_by only. All
+    #      other fields are immutable once captured (design principle:
+    #      provenance is frozen at capture time; only human editorial
+    #      changes over time).
+    return readRequestBody(req).then (bodyText) ->
+      payload = try JSON.parse(bodyText) catch then {}
+      dbPath = path.join CWD, 'runtime.sqlite'
+      unless fs.existsSync dbPath
+        return sendJson res, 400, { ok: false, error: 'runtime.sqlite missing on this pipe' }
+      db = null
+      try
+        db = new DatabaseSync dbPath
+        ensureStoracleObservationsTable db
+
+        # UPDATE branch
+        if payload.id?
+          id = Number(payload.id)
+          unless Number.isFinite(id) and id > 0
+            return sendJson res, 400, { ok: false, error: 'invalid id' }
+          now = new Date().toISOString()
+          info = db.prepare("""
+            UPDATE storacle_observations
+            SET notes = ?, noted_by = ?, updated_at = ?
+            WHERE id = ?
+          """).run(
+            String(payload.notes ? '')
+            payload.noted_by ? null
+            now
+            id
+          )
+          return sendJson res, 200, { ok: true, id: id, changes: info.changes, updated_at: now }
+
+        # CREATE branch — read provenance from out/
+        outDir      = path.join CWD, 'out'
+        metaPath    = path.join outDir, 'storacle_meta.json'
+        textPath    = path.join outDir, 'storacle.txt'
+        unless fs.existsSync metaPath
+          return sendJson res, 400, { ok: false, error: 'no storacle_meta.json in out/ — run storacle first' }
+        meta = try JSON.parse(fs.readFileSync(metaPath, 'utf8')) catch then null
+        unless meta? and typeof meta is 'object'
+          return sendJson res, 400, { ok: false, error: 'storacle_meta.json unreadable' }
+        generatedText = try fs.readFileSync(textPath, 'utf8') catch then ''
+
+        # Adapter provenance: if adapter is on, get its mtime and try
+        # to match against the most recent lora_training_runs row.
+        adapterPath   = meta.adapter_path ? ''
+        adapterMtime  = null
+        loraRunId     = null
+        if adapterPath and typeof adapterPath is 'string' and adapterPath.length
+          adapterAbs = path.join(CWD, adapterPath, 'adapters.safetensors')
+          if fs.existsSync(adapterAbs)
+            try adapterMtime = fs.statSync(adapterAbs).mtime.toISOString()
+            try
+              row = db.prepare("""
+                SELECT run_id FROM lora_training_runs
+                WHERE adapter_path = ? AND status = 'done'
+                  AND (finished_at IS NULL OR finished_at <= ?)
+                ORDER BY finished_at DESC LIMIT 1
+              """).get(adapterPath, adapterMtime ? new Date().toISOString())
+              loraRunId = row?.run_id ? null
+
+        llmConfig = meta.llm_config ? {}
+        llmConfigJson = try JSON.stringify(llmConfig) catch then '{}'
+
+        now = new Date().toISOString()
+        info = db.prepare("""
+          INSERT INTO storacle_observations
+            (observed_at, updated_at, storacle_logdir, adapter_path,
+             lora_run_id, adapter_mtime, story_id, prompt_text,
+             think_prefill, use_kag, use_chunks, rag_top_k,
+             llm_config_json, generated_text, notes, noted_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """).run(
+          now
+          now
+          payload.storacle_logdir ? null
+          adapterPath ? null
+          loraRunId
+          adapterMtime
+          meta.story_id ? null
+          meta.template_text ? null
+          llmConfig?.think_prefill ? null
+          (if meta.use_kag then 1 else 0)
+          (if meta.use_chunks then 1 else 0)
+          meta.rag_top_k ? null
+          llmConfigJson
+          generatedText
+          ''
+          payload.noted_by ? null
+        )
+        return sendJson res, 200, { ok: true, id: Number(info.lastInsertRowid), observed_at: now }
+      catch err
+        return sendJson res, 500, { ok: false, error: String(err?.message ? err) }
+      finally
+        try db?.close() catch then null
+
   if url.startsWith '/api/panel/'
     name = decodeURIComponent(url.slice('/api/panel/'.length).split('?')[0])
     return Promise.resolve(initPanelRegistry().data(name, {run: normalizeUiRun(readJson(path.join(CWD, 'state', 'ui-run.json'), {}))})).then (data) ->
@@ -2216,7 +2415,7 @@ server = http.createServer (req, res) ->
       logdir: launch.logdir
   if url is '/api/pipeline_svg' or url.startsWith('/api/pipeline_svg?')
     # Render a recipe's DAG SVG using pipeline_svg.coffee.
-    # Default: read the CURRENT pipe's experiment.yaml (last-run
+    # Default: read the CURRENT pipe's experiment.yaml (previous run's
     # config). With ?pipeline=<name>, load that recipe's config
     # directly (config/<name>.yaml + expandIncludes). Lets the UI
     # preview a different recipe's graph BEFORE running it.
