@@ -1,0 +1,648 @@
+celarien_arc_version: 0.1-draft
+seed:
+  author_description: 'A Celarien voyage arc: standard demonstration seed.'
+  sha256_uint32: 176081710
+chapter_count: 24
+act_count: 4
+class_sequence:
+  - port_trade
+  - games
+  - pirates
+  - crew_conflict
+  - port_trade
+  - threshold
+  - games
+  - pirates
+  - crew_conflict
+  - port_trade
+  - games
+  - threshold
+  - pirates
+  - crew_conflict
+  - port_trade
+  - games
+  - pirates
+  - threshold
+  - crew_conflict
+  - port_trade
+  - games
+  - pirates
+  - crew_conflict
+  - threshold
+chapters:
+  ch_0001:
+    class: port_trade
+    aperture: none
+    internal:
+      situation: 56
+      moving_lines:
+        - 1
+        - 3
+        - 5
+        - 6
+      derived: 17
+    fortune: success
+    passenger: null
+    pool_draws:
+      scenes:
+        - shrine_smoke_above_port
+        - harbor_cranes_and_grain_dust
+      characters:
+        - captain_asks_the_first_question
+        - captain_takes_a_bearing
+      disturbances:
+        - price_that_is_too_good
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_against_the_truce
+  ch_0002:
+    class: games
+    aperture: none
+    internal:
+      situation: 62
+      moving_lines:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+      derived: 60
+    fortune: defeat
+    passenger: null
+    pool_draws:
+      scenes:
+        - deck_dawn_watch_change
+        - lee_shore_weather_turning
+      characters:
+        - amazon_restrings_at_the_masthead
+        - captain_takes_a_bearing
+      disturbances:
+        - truce_ribbon_torn
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_against_the_truce
+  ch_0003:
+    class: pirates
+    aperture: none
+    internal:
+      situation: 7
+      moving_lines:
+        - 2
+        - 4
+        - 5
+      derived: 45
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - masthead_sail_sighted
+        - device_lamplight_gears
+      characters:
+        - amazon_restrings_at_the_masthead
+        - captain_takes_a_bearing
+      disturbances:
+        - wrong_flag_right_hull
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_over_profit
+  ch_0004:
+    class: crew_conflict
+    aperture: none
+    internal:
+      situation: 6
+      moving_lines:
+        - 1
+        - 3
+        - 4
+        - 6
+      derived: 5
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - games_crowd_roar_over_water
+        - shrine_smoke_above_port
+      characters:
+        - captain_asks_the_first_question
+        - amazon_reads_the_water
+      disturbances:
+        - watch_traded_in_secret
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_against_the_truce
+  ch_0005:
+    class: port_trade
+    aperture: none
+    internal:
+      situation: 48
+      moving_lines:
+        - 1
+        - 2
+        - 3
+        - 4
+      derived: 17
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - masthead_sail_sighted
+        - games_crowd_roar_over_water
+      characters:
+        - captain_takes_a_bearing
+        - captain_asks_the_first_question
+      disturbances:
+        - cargo_nobody_will_name
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0006:
+    class: threshold
+    aperture: underworld
+    internal:
+      situation: 64
+      moving_lines:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 6
+      derived: 36
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - lee_shore_weather_turning
+        - deck_dawn_watch_change
+      characters:
+        - amazon_reads_the_water
+        - athlete_weighs_his_advantage
+      disturbances:
+        - device_disagrees_with_priestess
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0007:
+    class: games
+    aperture: none
+    internal:
+      situation: 10
+      moving_lines:
+        - 4
+        - 5
+        - 6
+      derived: 19
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - harbor_cranes_and_grain_dust
+        - masthead_sail_sighted
+      characters:
+        - captain_takes_a_bearing
+        - athlete_weighs_his_advantage
+      disturbances:
+        - truce_ribbon_torn
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_against_the_truce
+  ch_0008:
+    class: pirates
+    aperture: none
+    internal:
+      situation: 33
+      moving_lines:
+        - 3
+        - 4
+        - 5
+      derived: 23
+    fortune: success
+    passenger: null
+    pool_draws:
+      scenes:
+        - shrine_smoke_above_port
+        - masthead_sail_sighted
+      characters:
+        - athlete_trains_on_the_foredeck
+        - captain_asks_the_first_question
+      disturbances:
+        - oars_in_fog
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0009:
+    class: crew_conflict
+    aperture: none
+    internal:
+      situation: 47
+      moving_lines:
+        - 2
+        - 4
+        - 5
+      derived: 2
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - games_crowd_roar_over_water
+        - lee_shore_weather_turning
+      characters:
+        - amazon_restrings_at_the_masthead
+        - passenger_watches_the_wake
+      disturbances:
+        - watch_traded_in_secret
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0010:
+    class: port_trade
+    aperture: none
+    internal:
+      situation: 45
+      moving_lines:
+        - 2
+        - 3
+        - 4
+      derived: 48
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - shrine_smoke_above_port
+        - masthead_sail_sighted
+      characters:
+        - athlete_trains_on_the_foredeck
+        - passenger_watches_the_wake
+      disturbances:
+        - cargo_nobody_will_name
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_over_profit
+  ch_0011:
+    class: games
+    aperture: none
+    internal:
+      situation: 21
+      moving_lines:
+        - 1
+        - 3
+        - 4
+        - 5
+      derived: 53
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - games_crowd_roar_over_water
+        - shrine_smoke_above_port
+      characters:
+        - captain_asks_the_first_question
+        - amazon_reads_the_water
+      disturbances:
+        - truce_ribbon_torn
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0012:
+    class: threshold
+    aperture: underworld
+    internal:
+      situation: 36
+      moving_lines:
+        - 3
+        - 5
+        - 6
+      derived: 42
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - harbor_cranes_and_grain_dust
+        - device_lamplight_gears
+      characters:
+        - captain_asks_the_first_question
+        - amazon_reads_the_water
+      disturbances:
+        - device_disagrees_with_priestess
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0013:
+    class: pirates
+    aperture: none
+    internal:
+      situation: 40
+      moving_lines:
+        - 1
+        - 2
+        - 3
+        - 5
+      derived: 49
+    fortune: success
+    passenger: null
+    pool_draws:
+      scenes:
+        - harbor_cranes_and_grain_dust
+        - masthead_sail_sighted
+      characters:
+        - athlete_weighs_his_advantage
+        - amazon_reads_the_water
+      disturbances:
+        - wrong_flag_right_hull
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0014:
+    class: crew_conflict
+    aperture: none
+    internal:
+      situation: 17
+      moving_lines:
+        - 3
+        - 4
+        - 5
+        - 6
+      derived: 22
+    fortune: defeat
+    passenger: null
+    pool_draws:
+      scenes:
+        - harbor_cranes_and_grain_dust
+        - deck_dawn_watch_change
+      characters:
+        - passenger_watches_the_wake
+        - captain_takes_a_bearing
+      disturbances:
+        - rations_counted_twice
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0015:
+    class: port_trade
+    aperture: none
+    internal:
+      situation: 42
+      moving_lines:
+        - 3
+        - 4
+        - 5
+      derived: 30
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - masthead_sail_sighted
+        - deck_dawn_watch_change
+      characters:
+        - athlete_trains_on_the_foredeck
+        - captain_asks_the_first_question
+      disturbances:
+        - cargo_nobody_will_name
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_against_the_truce
+  ch_0016:
+    class: games
+    aperture: none
+    internal:
+      situation: 16
+      moving_lines:
+        - 2
+        - 4
+        - 5
+        - 6
+      derived: 59
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - device_lamplight_gears
+        - games_crowd_roar_over_water
+      characters:
+        - captain_takes_a_bearing
+        - amazon_restrings_at_the_masthead
+      disturbances:
+        - truce_ribbon_torn
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_over_profit
+  ch_0017:
+    class: pirates
+    aperture: none
+    internal:
+      situation: 7
+      moving_lines:
+        - 2
+        - 4
+        - 6
+      derived: 35
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - harbor_cranes_and_grain_dust
+        - games_crowd_roar_over_water
+      characters:
+        - captain_asks_the_first_question
+        - athlete_trains_on_the_foredeck
+      disturbances:
+        - oars_in_fog
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_against_the_truce
+  ch_0018:
+    class: threshold
+    aperture: oracle
+    internal:
+      situation: 63
+      moving_lines:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 6
+      derived: 6
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - shrine_smoke_above_port
+        - lee_shore_weather_turning
+      characters:
+        - captain_asks_the_first_question
+        - amazon_reads_the_water
+      disturbances:
+        - offering_refused
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_over_profit
+  ch_0019:
+    class: crew_conflict
+    aperture: none
+    internal:
+      situation: 58
+      moving_lines:
+        - 1
+        - 2
+        - 3
+        - 5
+      derived: 62
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - shrine_smoke_above_port
+        - device_lamplight_gears
+      characters:
+        - passenger_watches_the_wake
+        - athlete_trains_on_the_foredeck
+      disturbances:
+        - rations_counted_twice
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0020:
+    class: port_trade
+    aperture: none
+    internal:
+      situation: 56
+      moving_lines:
+        - 1
+        - 2
+        - 3
+        - 6
+      derived: 54
+    fortune: riches
+    passenger: null
+    pool_draws:
+      scenes:
+        - deck_dawn_watch_change
+        - device_lamplight_gears
+      characters:
+        - captain_takes_a_bearing
+        - captain_asks_the_first_question
+      disturbances:
+        - cargo_nobody_will_name
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0021:
+    class: games
+    aperture: none
+    internal:
+      situation: 16
+      moving_lines:
+        - 3
+        - 4
+        - 5
+      derived: 39
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - games_crowd_roar_over_water
+        - device_lamplight_gears
+      characters:
+        - passenger_watches_the_wake
+        - athlete_trains_on_the_foredeck
+      disturbances:
+        - laurel_promised_twice
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_over_profit
+  ch_0022:
+    class: pirates
+    aperture: none
+    internal:
+      situation: 39
+      moving_lines:
+        - 1
+        - 3
+        - 6
+      derived: 42
+    fortune: success
+    passenger: null
+    pool_draws:
+      scenes:
+        - shrine_smoke_above_port
+        - lee_shore_weather_turning
+      characters:
+        - athlete_trains_on_the_foredeck
+        - captain_asks_the_first_question
+      disturbances:
+        - oars_in_fog
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_over_profit
+  ch_0023:
+    class: crew_conflict
+    aperture: none
+    internal:
+      situation: 38
+      moving_lines:
+        - 2
+        - 4
+        - 5
+      derived: 42
+    fortune: defeat
+    passenger: null
+    pool_draws:
+      scenes:
+        - masthead_sail_sighted
+        - harbor_cranes_and_grain_dust
+      characters:
+        - athlete_trains_on_the_foredeck
+        - captain_asks_the_first_question
+      disturbances:
+        - watch_traded_in_secret
+      soundings:
+        - sounding_cargo_unease
+      bearings:
+        - bearing_against_the_truce
+  ch_0024:
+    class: threshold
+    aperture: oracle
+    internal:
+      situation: 24
+      moving_lines:
+        - 1
+        - 2
+        - 3
+        - 6
+      derived: 18
+    fortune: setback
+    passenger: null
+    pool_draws:
+      scenes:
+        - device_lamplight_gears
+        - harbor_cranes_and_grain_dust
+      characters:
+        - captain_takes_a_bearing
+        - athlete_weighs_his_advantage
+      disturbances:
+        - device_disagrees_with_priestess
+      soundings:
+        - sounding_easy_harbor
+      bearings:
+        - bearing_over_profit

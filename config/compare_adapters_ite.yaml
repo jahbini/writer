@@ -5,9 +5,14 @@
 #   adapters on the frozen held-out prompt set with deterministic
 #   sampling (temperature 0). One step, no training.
 #
-#   Adapters stay pipe-local under build/adapter*/. Model is pinned
-#   to $MODELS.
+#   Adapters stay pipe-local under build/adapter*/. Model path is
+#   the pipe's own run.quantized_dir (set in the pipe's override.yaml).
 run:
+  # Model paths are pipe-level facts. The pipe's override.yaml MUST
+  # set run.loraLand (base) and run.quantized_dir (quantized). See
+  # writer/MORNING.md — 2026-09-21 the recipe stops manufacturing
+  # paths via ${MODELS}/${run.model}; the step block below only
+  # *points to* run.quantized_dir by name.
   output_dir: out
   data_dir: data
 
@@ -20,7 +25,7 @@ compare_adapters_ite:
   depends_on: []
   needs: []
   makes: [adapter_comparison]
-  quantized_model_dir: ${MODELS}/${run.model}-mlx4
+  quantized_model_dir: ${run.quantized_dir}
   eval_spec_path: '{BASE}/eval/heldout_prompts.json'
   # The adapters to rank. `adapter_path: null` = base model (no adapter).
   # Paths are relative to the pipe CWD. Edit the list per comparison —

@@ -1625,13 +1625,29 @@ handleCreatePipe = (req, res) ->
     for sub in ['state', 'logs', 'out']
       fs.mkdirSync path.join(pipeDir, sub), { recursive: true }
 
+    # Pipe foundation: model paths live in the `run:` block. Every
+    # recipe reads run.loraLand (base) and run.quantized_dir
+    # (quantized) directly; no ${MODELS}/${run.model} interpolation.
+    # See writer/MORNING.md — 2026-09-21 the recipe layer stopped
+    # manufacturing paths, so the pipe MUST name them here.
+    #
+    # Derivation at creation time: ${MODELS}/<model> and
+    # ${MODELS}/<model>-mlx4. MODELS comes from process.env.MODELS
+    # (falling back to ~/models). If the human wants a non-standard
+    # layout, they hand-edit this file after creation.
+    modelsRoot = process.env.MODELS ? path.join(process.env.HOME, 'models')
+    baseModelPath = path.join(modelsRoot, model)
+    quantizedModelPath = path.join(modelsRoot, "#{model}-mlx4")
     overrideText = """
       # pipes/#{name}/override.yaml — created by /api/create_pipe
-      # Pipeline selector + model identity. See GPT/model_identity.md.
+      # Pipeline selector + pipe foundation (identity + model paths).
+      # See writer/MORNING.md for the recipe/foundation contract.
       pipeline: #{pipelineName}
 
       run:
-        model: #{model}
+        model:         #{model}
+        loraLand:      #{baseModelPath}
+        quantized_dir: #{quantizedModelPath}
     """
     fs.writeFileSync path.join(pipeDir, 'override.yaml'), overrideText + '\n', 'utf8'
 
@@ -1825,6 +1841,12 @@ handleHumanOverride = (req, res) ->
   sendJson res, 200,
     ok: true
     override: override
+
+# handleCelarienAuthorDescription removed 2026-09-20 — celarien spine
+# generation moved to the puppeteer's UI. See
+# puppeteer/ui_server.coffee for the current endpoint and
+# writer/GPT/story/celarien_status.md § "Refactor" for the migration
+# note.
 
 handleClearPipelineState = (req, res) ->
   pipelinePath = path.join(CWD, 'pipeline.json')
@@ -2471,6 +2493,9 @@ server = http.createServer (req, res) ->
       sendJson res, 500,
         ok: false
         error: String(err?.message ? err)
+  # /api/celarien_author_description removed 2026-09-20 — celarien
+  # spine/directive work moved to the puppeteer per grand_scheme.md.
+  # See puppeteer/ui_server.coffee for the current endpoint.
   if url is '/api/clear_pipeline_state' and req.method is 'POST'
     return Promise.resolve(handleClearPipelineState(req, res)).catch (err) ->
       sendJson res, 500,

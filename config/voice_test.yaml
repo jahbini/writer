@@ -1,0 +1,73 @@
+# =====================================================================
+#   voice_test.yaml — smoke recipe for prompt-decoupled voice eval
+# =====================================================================
+#   Given a diary_prompt.txt (dropped into params/ by some upstream
+#   authoring pipe or by hand), feeds it to THIS pipe's own quantized
+#   model and writes the resulting diary to out/diary_voice.txt.
+#
+#   This is the peer side of the "spine-and-prompt separated from
+#   voice" design. One step. No LLM structural work.
+run:
+  output_dir: out
+  data_dir: data
+
+artifacts:
+  diary_voice_text:
+    target: out/diary_voice.txt
+
+voice_from_prompt:
+  run: prompt_llm/voice_from_prompt.coffee
+  depends_on: []
+  needs: []
+  makes: [diary_voice_text]
+  # Two ways to supply the prompt (spine wins if both set):
+  #   spine: <name>        — read data/spines/<name>.txt via meta layer
+  #   prompt_file: <path>  — read explicit path relative to CWD
+  # Recipe default reads the fan-in artifact left by voice_fanout at
+  # out/diary_prompt.txt. Overrides / control_override.yaml can point
+  # at a specific spine.
+  prompt_file: out/diary_prompt.txt
+  # UI_textarea declaration so queue_run_ite / puppeteer scans can pass
+  # `voice_from_prompt.spine` via ui_values. Empty string = fall back
+  # to prompt_file. Set to a name from data/spines/<name>.txt to read
+  # a spine via the meta layer.
+  spine: [ UI_textarea, "" ]
+  quantized_model_dir: ${run.quantized_dir}
+  # Adapter loading — where the pipe's trained voice actually lives.
+  # Explicit null (or removing this line) = base-model voice reading.
+  adapter_path: build/adapter
+  max_tokens: 2400
+  temperature: 0.85
+  top_p: 0.9
+  # 2026-09-21: run with chat template (raw:false) so Qwen3's <think>
+  # phase fires. rawText will include the <think>...</think> chatter
+  # for prompt inspection. Also nudge the sampler against loops.
+  raw: false
+  repetition_penalty: 1.15
+  repetition_context_size: 128
+
+  # 2026-09-21: think_prefill counteracts the mechanical scene-by-scene
+  # planning we saw the models default to across all 4 sizes. Every
+  # <think> block opened with "Okay let's tackle this query" and
+  # enumerated the prompt's scenes as a numbered plan — producing
+  # letters that read like plot summaries. This prefill fills the
+  # think block with a completed anti-plan, so the model treats "no
+  # numbering, no scene labels, short is fine" as its own already-
+  # reasoned conclusion. See voice_sweep_susanna/ observations.
+  think_prefill: |
+    I am writing Jim's letter, not a report. No numbered paragraphs,
+    no section labels, no "First... Then... Finally." Jim writes the
+    way he talks — a specific detail, a veer, a name dropped, another
+    veer. Southwick or a small aside can slip in wherever it wants;
+    it isn't a scheduled beat.
+
+    Short is fine. An aphorism can end where a scene wants to trail
+    off — the strong ending is a specific short line, not a summary.
+    "She did." is a legal ending.
+
+    I don't march through the scene list mechanically. Some of what
+    happened matters more than the rest; the parts that don't earn
+    their weight go missing without apology. Jim doesn't announce
+    the shape; he just writes.
+
+    I begin.

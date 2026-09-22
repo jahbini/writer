@@ -1208,6 +1208,135 @@
       target.innerHTML = runHtml;
     };
 
+    // Elementary SAT verdicts — two-column adapted-vs-base grid with
+    // per-check status dot (● pass / ✕ fail / — missing) and a
+    // collapsible drilldown for failure detail. Data shape comes
+    // from ~/writer/panels/sat_verdicts.coffee.
+    window.PANEL_CUSTOM_RENDERERS.sat_verdicts = function (target, value) {
+      const sides = (value && value.sides) || {};
+      const sideKeys = ['adapted', 'base'];
+      const CHECK_ORDER = [
+        ['structureCount',           '5-segment count'],
+        ['characterLock',            'character lock'],
+        ['freshnessCopy',            'freshness (no copy)'],
+        ['premiseAdherence',         'premise adherence'],
+        ['checkStructureOrder',      'segment order (LLM)'],
+        ['checkInvariantPreserving', 'invariants (LLM)']
+      ];
+      if (!sides.adapted && !sides.base) {
+        target.innerHTML = '<div class="hint mono">(no SAT verdicts yet — run elementary_sat_ite)</div>';
+        return;
+      }
+      const dot = (passed) => {
+        if (passed === true)  return '<span style="color:#3d7a45;font-weight:bold;">●</span>';
+        if (passed === false) return '<span style="color:#a53d3d;font-weight:bold;">✕</span>';
+        return '<span class="hint">—</span>';
+      };
+      const header = `<tr>
+        <th style="text-align:left;padding:4px 8px;font-family:monospace;font-size:0.85em;">check</th>
+        ${sideKeys.map(s => `<th style="padding:4px 8px;font-family:monospace;font-size:0.85em;">${s}</th>`).join('')}
+      </tr>`;
+      const rows = CHECK_ORDER.map(([key, label]) => {
+        const cells = sideKeys.map(sk => {
+          const entry = sides[sk];
+          if (!entry || !entry.verdict || !entry.verdict.checks) {
+            return `<td style="text-align:center;padding:2px 8px;">${dot(null)}</td>`;
+          }
+          const c = entry.verdict.checks[key];
+          const passed = c && typeof c.passed === 'boolean' ? c.passed : null;
+          const title = c ? escapeHtml(JSON.stringify(c)) : '';
+          return `<td style="text-align:center;padding:2px 8px;" title="${title}">${dot(passed)}</td>`;
+        }).join('');
+        return `<tr>
+          <td style="padding:2px 8px;font-family:monospace;font-size:0.85em;">${label}</td>
+          ${cells}
+        </tr>`;
+      }).join('');
+      const summary = sideKeys.map(sk => {
+        const e = sides[sk];
+        if (!e) return `<span class="hint">${sk}: —</span>`;
+        if (e.error) return `<span style="color:#a53d3d;">${sk}: ${escapeHtml(e.error)}</span>`;
+        const v = e.verdict || {};
+        const status = v.passed === true ? '<span style="color:#3d7a45;font-weight:bold;">PASS</span>'
+                    : v.passed === false ? '<span style="color:#a53d3d;font-weight:bold;">FAIL</span>'
+                    : '<span class="hint">?</span>';
+        const mtime = e.mtime ? ` <span class="hint">(${e.mtime.replace('T',' ').slice(0,16)})</span>` : '';
+        return `<span style="margin-right:16px;font-family:monospace;font-size:0.85em;">${sk}: ${status}${mtime}</span>`;
+      }).join('');
+      const drilldowns = sideKeys.map(sk => {
+        const e = sides[sk];
+        if (!e || !e.verdict) return '';
+        return `<details style="margin-top:6px;">
+          <summary style="cursor:pointer;font-family:monospace;font-size:0.85em;">${sk} — raw verdict</summary>
+          <pre class="mono" style="background:rgba(120,120,120,0.06);padding:6px;border-radius:3px;max-height:280px;overflow:auto;font-size:0.8em;">${escapeHtml(JSON.stringify(e.verdict, null, 2))}</pre>
+        </details>`;
+      }).join('');
+      target.innerHTML = `
+        <div style="margin-bottom:6px;">${summary}</div>
+        <table style="border-collapse:collapse;">
+          <thead>${header}</thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${drilldowns}
+      `;
+    };
+
+    // SAT three-tier bucket dashboard. Shows this pipe's placement:
+    // Tier 1 elementary (can_read?), Tier 2 diary (can_diary?), Tier 3
+    // story (can_story?). Data from ~/writer/panels/sat_buckets.coffee.
+    window.PANEL_CUSTOM_RENDERERS.sat_buckets = function (target, value) {
+      const tiers = (value && Array.isArray(value.tiers)) ? value.tiers : [];
+      if (!tiers.length) {
+        target.innerHTML = '<div class="hint mono">(no SAT verdicts yet)</div>';
+        return;
+      }
+      const chip = (text, kind) => {
+        const bg = kind === 'pass' ? '#3d7a45'
+                : kind === 'fail' ? '#a53d3d'
+                : '#666';
+        return `<span style="background:${bg};color:white;padding:2px 8px;border-radius:3px;font-family:monospace;font-size:0.85em;font-weight:bold;">${escapeHtml(text)}</span>`;
+      };
+      const knobLine = (knobs) => {
+        if (!knobs || typeof knobs !== 'object') return '';
+        const parts = [];
+        if (knobs.temperature != null) parts.push(`t=${knobs.temperature}`);
+        if (knobs.top_p != null)       parts.push(`p=${knobs.top_p}`);
+        if (knobs.adapter_dir)         parts.push(`adapter=${String(knobs.adapter_dir).split('/').pop()}`);
+        if (knobs.with_judge != null)  parts.push(`judge=${knobs.with_judge?'on':'off'}`);
+        return parts.length ? `<span class="hint" style="font-family:monospace;font-size:0.8em;margin-left:8px;">${escapeHtml(parts.join(' '))}</span>` : '';
+      };
+      const html = tiers.map(t => {
+        const rows = t.entries.map(e => {
+          if (e.missing) {
+            return `<tr><td style="padding:2px 8px;font-family:monospace;font-size:0.85em;">${escapeHtml(e.key)}</td><td>${chip('pending', 'pending')}</td><td class="hint" style="padding:2px 8px;">—</td></tr>`;
+          }
+          if (e.error) {
+            return `<tr><td style="padding:2px 8px;font-family:monospace;font-size:0.85em;">${escapeHtml(e.key)}</td><td>${chip('ERR', 'fail')}</td><td class="hint" style="padding:2px 8px;">${escapeHtml(e.error)}</td></tr>`;
+          }
+          const v = e.verdict || {};
+          const bucket = v.bucket || (v.pass === true ? 'pass' : v.pass === false ? 'fail' : '?');
+          const kind = (v.pass === true) ? 'pass' : (v.pass === false ? 'fail' : 'pending');
+          const mtime = e.mtime ? e.mtime.replace('T',' ').slice(0,16) : '';
+          return `<tr>
+            <td style="padding:2px 8px;font-family:monospace;font-size:0.85em;">${escapeHtml(e.key)}</td>
+            <td style="padding:2px 8px;">${chip(bucket, kind)}${knobLine(v.knobs)}</td>
+            <td class="hint" style="padding:2px 8px;font-family:monospace;font-size:0.8em;">${escapeHtml(mtime)}</td>
+          </tr>`;
+        }).join('');
+        return `
+          <div style="margin:6px 0;padding:6px 8px;border:1px solid rgba(120,120,120,0.2);border-radius:4px;">
+            <div style="font-weight:bold;margin-bottom:4px;font-size:0.9em;">${escapeHtml(t.label)}</div>
+            <table style="border-collapse:collapse;"><tbody>${rows}</tbody></table>
+          </div>`;
+      }).join('');
+      target.innerHTML = html;
+    };
+
+    // Celarien setup panel — MOVED 2026-09-20 to the puppeteer UI
+    // per grand_scheme.md's step-boundary rule. Spine generation is
+    // a laptop concern; peer pipes only handle LLM generation +
+    // audit. See puppeteer/ui/index.html for the current panel.
+
     window.PANEL_CUSTOM_RENDERERS.log_files = function (target, value) {
       const files = value && Array.isArray(value.files) ? value.files : [];
       target.innerHTML =

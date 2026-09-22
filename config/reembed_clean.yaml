@@ -12,7 +12,18 @@
 #   same source of truth — no file-based dedup, no cache-poisoning.
 
 run:
-  model: Qwen/Qwen3-4B-Instruct-2507
+  # 2026-09-21: each pipe embeds its own chunks with its own model
+  # (run.quantized_dir), so the pipe's SAT/eval score reflects the
+  # pipe's own retrieval quality end-to-end — not the retrieval
+  # quality of some other model piggybacked in.
+  #
+  # Historical note: this recipe used to pin
+  # `run.model: Qwen/Qwen3-4B-Instruct-2507` and interpolate
+  # `${MODELS}/${run.model}-mlx4`, which meant every pipe ran the
+  # 4B embedder over the same jim.md chunks and stored byte-identical
+  # kag_embeddings_clean rows. That was N-fold redundant computation
+  # AND leaked a foreign model's retrieval quality into every pipe's
+  # eval score. Both problems are gone as of this migration.
   output_dir: out
   data_dir: data
 
@@ -28,7 +39,7 @@ reembed_chunks_clean:
   depends_on: []
   needs: []
   makes: [reembed_remaining_count]
-  quantized_model_dir: ${MODELS}/${run.model}-mlx4
+  quantized_model_dir: ${run.quantized_dir}
   # Batch size: matches oracle_ask_sqlite.batch_size so oracle and
   # reembed march in lockstep — 4 stories oracled = 4 stories reembedded.
   # A crash costs at most 4 stories of work in either step.

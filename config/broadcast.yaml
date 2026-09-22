@@ -1,0 +1,41 @@
+# =====================================================================
+#   broadcast.yaml — 0.6B headline + epilogue for a completed story
+# =====================================================================
+#   Runs on a pipe hosting Qwen3-0.6B (see writer/GPT/story/model_roles.md
+#   for why the 0.6B is the right model for this — punctuation, not body).
+#   Given a story file + optional spine name, shotgun-generates N
+#   headlines and N epilogues, then formats them for X (Twitter),
+#   Facebook, email subject, and newsletter preheader.
+
+run:
+  # Model paths come from the pipe's override.yaml run: block.
+  # See writer/MORNING.md for the recipe/foundation contract.
+  output_dir: out
+  data_dir: data
+
+artifacts:
+  broadcast_headlines_jsonl:
+    target: out/broadcast_headlines.json
+  broadcast_epilogues_jsonl:
+    target: out/broadcast_epilogues.json
+  broadcast_bundle_json:
+    target: out/broadcast_bundle.json
+
+broadcast_ite:
+  run: broadcast_ite.coffee
+  depends_on: []
+  needs: []
+  makes: [broadcast_headlines_jsonl, broadcast_epilogues_jsonl, broadcast_bundle_json]
+  # === human dials ===
+  # story_file: MUST be set in control_override / pipe override —
+  #             path to a completed story text, relative to pipe CWD.
+  story_file: [ UI_textarea, "out/story.txt" ]
+  # spine: optional. Names the spine under ~/writer/data/spines/<name>.txt
+  #        used to author the original story. Provides structural
+  #        anchor for headline generation.
+  spine: [ UI_textarea, "" ]
+  n_candidates: 5
+  headline_max_words: 15
+  platforms: [twitter, facebook, email, newsletter]
+  # Model path from pipe foundation.
+  quantized_model_dir: ${run.quantized_dir}

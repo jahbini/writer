@@ -1,5 +1,5 @@
 # =====================================================================
-#   prompt_llm.yaml — project-shared, pinned via ${MODELS}/${run.model} — universal
+#   prompt_llm.yaml — project-shared, references run.quantized_dir — universal
 # =====================================================================
 #   Promoted from pipes/Huihui-.../config/ on 2026-08-22 so both the
 #   Huihui and story pipes inherit the pins via the resolver's BASE
@@ -7,10 +7,14 @@
 #   own pipes/<pipe>/config/prompt_llm.yaml (CWD-tier shadow, wins over BASE).
 
 run:
+  # Model paths are pipe-level facts. The pipe's override.yaml MUST
+  # set run.loraLand (base) and run.quantized_dir (quantized). See
+  # writer/MORNING.md — 2026-09-21 the recipe stops manufacturing
+  # paths via ${MODELS}/${run.model}; step blocks below only *point
+  # to* run.quantized_dir by name.
   output_dir: out
   data_dir: data
   training_dir: build/train
-  loraLand: ${MODELS}/${run.model}
   debug_s: false
   debug_mlx: false
   debug_sql: false
@@ -28,7 +32,7 @@ generate_prompt_llm:
   depends_on: []
   needs: []
   makes: [prompt_generate_raw, prompt_generate_meta, prompt_generate_text]
-  quantized_model_dir: ${MODELS}/${run.model}-mlx4
+  quantized_model_dir: ${run.quantized_dir}
   # Adapter picker (UI dropdown). Lists build/adapter* dirs + a base option;
   # defaults to build/adapter. Pick a checkpoint or (base) from the UI.
   adapter_path: [ UI_dropdown, adapters, build/adapter ]

@@ -1,6 +1,120 @@
-# NEXT SESSION — read this first (handoff 2026-08-02 afternoon)
+# NEXT SESSION — read this first (handoff 2026-09-17 evening)
 
-## Where we are (2026-08-02 afternoon)
+## Where we are (2026-09-17 evening)
+
+**Session focus:** scheduling helper polish → SAT design → elementary SAT recipe. Three projects touched today (`puppeteer`, `pipeline`, `writer`). The full earlier handoff (2026-08-02) starts below this section — still relevant for story-generation state; the story pipeline itself was NOT modified today.
+
+### 1. Scheduling helper (puppeteer + pipeline)
+
+**Landed:**
+- Dual-shape rescue in `pipeline/mlx/helper_llm.coffee` `runCapability`: when a generation truncates mid-`<think>` inject "time's up" + `</think>` + `{`; when it truncates mid-JSON, continue the partial. Falls through to lower-temp retry if either rescue fails. Details in `pipeline/GPT/helper/thinking_budget_rescue.md`.
+- `maxTokens` for `schedule` capability bumped 400 → 1500. Rescue armed but doesn't fire on the 7 canonical scenarios because the budget carries.
+- Two new capabilities on `helper_llm`: `grade_role(paragraph, expectedRole)` and `grade_invariants(letter, invariants)`. Used by the elementary SAT.
+- KAG (Keyword-Augmented Generation) built end-to-end: `puppeteer/scripts/helper_kag.coffee` (selector + schema migration), `puppeteer/scripts/helper_kag_annotate.coffee` (one-shot regex annotator), integrated into `puppeteer/scripts/helper_scheduling_loop.coffee`. All 17 seed rows annotated. A/B on the 7 canonicals: KAG 3/7 = full-corpus 3/7 aggregate, but different failures — KAG fixed the ratio-hallucination (probe #5), regressed graduate (probe #6). Details in `puppeteer/GPT/helper/kag_design.md`.
+- Reason-mining sweep (2026-09-17) documented four failure modes not fixable by KAG alone: rule-specificity collapse, ratio hallucination, defensive-wait bias, field-name ambiguity for `peer_active_now: null`. Table + regex seeds in `puppeteer/GPT/helper/reason_mining_findings.md`.
+- A/B probe (`puppeteer/scripts/helper_ab_probe.coffee`) now uses subprocess isolation per probe + file-based IPC. Fixes a persistent tensor-mismatch crash from `nn.quantize` + `applyLoRA` mutating native `@frost-beta/mlx` state across `createSession` calls in the same process.
+
+**Standing conclusions:**
+- Helper LoRA adapter v1 (2026-09-17, rank 8, 50 iters, 17 rows) is a lemon — memorized JSON shape, forgot reasoning, hallucinates. Do not enable in production. `pipeline/GPT/helper/adapter_v1_lemon.md`.
+- Base + KAG-top-5 is the current best config. `helper_scheduling_loop.advise()` uses it by default; falls back to bulk-corpus when annotations are absent.
+
+**Open threads:**
+- Tune `grade_role` prefill to be less lenient (called MuseCycle-in-scene-slot "good"; should be "weak") and `grade_invariants` to prefer "absent" over "contradicted" when the letter is off-topic. Both quirks observed on 2026-09-17 self-tests.
+- KAG scoring is pure hit-count. Add weighted scoring so a well-matched row isn't diluted by baseline anchors (regression on probe #6 was exactly this).
+- Add 2–3 adversarial anti-rows to the KAG corpus for rule-specificity collapse cases.
+
+### 2. SAT design + elementary SAT (writer)
+
+**Three-tier grading ladder agreed:**
+1. **Elementary** — pass/fail gate, one letter, cheap floor. Built today.
+2. **Graduate SAT — Diary** — relative ranking, chunk-by-chunk pairwise LLM judge across configs. Design in `writer/GPT/sat/elementary_sat.md` (paired mode not yet built).
+3. **Graduate SAT — Story** — same shape for multi-chapter arcs. Not started.
+
+**Elementary landed as a recipe:** `writer/scripts/elementary_sat_ite.coffee`. Follows writer conventions (meta-device I/O only, no `fs`, `L.callLLM` for judge calls, location-anonymous, `@step = {desc, action:(L)->}`). Six checks: `structure_count`, `character_lock`, `freshness_copy`, `premise_adherence`, `structure_order` (LLM, 5 calls), `invariant_preserving` (LLM, 1 call). Emits `sat_verdict_<side>` artifact.
+
+**Also present:** a standalone probe version at `pipeline/scripts/elementary_sat.coffee` (with `--letter`, `--prompt`, `--with-llm` flags) for grading files without running the pipeline. Same rubric, uses `helper_llm` directly.
+
+**Diary the SAT was tested against** (adapter-mode letter, MuseCycle/Malibu/Lightning remix): fails 5/6 checks. Only `structure_count` passes. Character-lock, freshness-copy (verbatim "undigestible beet in our society's alimentary canal"), premise-adherence, structure-order (p4 wrong), and invariants (broken) all correctly fail.
+
+**Pipeline bug uncovered upstream of grading:**
+The prompt's "Things that must stay true" section INVERTS the actual premise:
+- `story_outline.story_description` says Jim was the *customer* who almost stiffed his mechanic; realized *he* was the villain and paid.
+- The prompt to the diary generator says invariants are "Jim stiffed his friend for the water pump repair" AND "Jim discovered he had overcharged the mechanic."
+
+Somewhere in `story_beats`/`scene_planner`/`chapter_context` the outline's Jim-as-customer gets flipped to Jim-as-provider. **Fix upstream — no diary can preserve invariants that don't match the source.**
+
+### 3. Wiring the SAT into `experiment.yaml`
+
+Not committed yet; the recipe exists but `experiment.yaml` doesn't call it. Suggested additions (in `writer/GPT/sat/elementary_sat.md`):
+
+```yaml
+artifacts:
+  sat_verdict_adapted:
+    target: out/sat_verdict_adapted.json
+  sat_verdict_base:
+    target: out/sat_verdict_base.json
+
+elementary_sat_adapted:
+  run: elementary_sat_ite.coffee
+  depends_on: [generate_diary_with_adapter_ite, story_spine]
+  needs: [diary_adapted_text, diary_prompt_text, story_spine_json]
+  makes: [sat_verdict_adapted]
+  side: adapted
+  with_llm: true
+  grader_model_dir: /Volumes/bigbig//models/Qwen/Qwen2.5-3B-Instruct-mlx4
+
+elementary_sat_base:
+  # ... same shape, side: base, depends on generate_diary_without_adapter_ite
+```
+
+The `sat_verdict_*.json` artifacts are the feedback surface for the puppeteer — the assembler can `ssh cat` them like it does `recipe_manifest.json` and expose `sat_pass_adapted`, `sat_pass_base`, plus specific failing checks in `cross_pipe_signals` for the scheduling helper's next decision.
+
+### 4. Repository/notes hygiene
+
+Reorganized session-authored notes out of `.claude/` (violates the "no hidden dirs" rule from CONVENTIONS.md + user's explicit directive). Now living in:
+
+- `puppeteer/GPT/rules/` — 10 collaboration/operational feedback files
+- `puppeteer/GPT/helper/` — 3 helper design + findings notes
+- `pipeline/GPT/helper/` — 2 mlx/rescue notes
+- `writer/GPT/sat/` — 1 elementary SAT design
+
+`.claude/projects/.../memory/MEMORY.md` is now a pointer-only index. No new content goes into `.claude/` — repo `GPT/` dirs are the only home.
+
+### 5. Files touched today (for the user's commit sweep)
+
+**`pipeline/` — modified:**
+- `mlx/helper_llm.coffee` — dual-shape rescue in `runCapability`, `maxTokens` bump, new `grade_role` + `grade_invariants` capabilities, `DIARY_ROLES` export.
+- `scripts/elementary_sat.coffee` — new, standalone SAT probe.
+
+**`pipeline/GPT/` — new:**
+- `helper/adapter_v1_lemon.md`
+- `helper/thinking_budget_rescue.md`
+
+**`puppeteer/` — modified:**
+- `scripts/helper_ab_probe.coffee` — subprocess isolation, dual-shape rescue smoke tests, `--kag` mode.
+- `scripts/helper_scheduling_loop.coffee` — KAG-aware corpus selection.
+
+**`puppeteer/` — new:**
+- `scripts/helper_kag.coffee`
+- `scripts/helper_kag_annotate.coffee`
+
+**`puppeteer/GPT/` — new:**
+- `helper/kag_design.md`, `helper/reason_mining.md`, `helper/reason_mining_findings.md`
+- `rules/*.md` — 10 files (relocated from `.claude/memory/`)
+
+**`writer/` — new:**
+- `scripts/elementary_sat_ite.coffee` — the recipe.
+- `GPT/sat/elementary_sat.md` — design + findings.
+
+**Not yet done — for tomorrow:**
+- Fix the invariant-inversion upstream bug (`story_beats` / `scene_planner`).
+- Add the two `elementary_sat_*` steps to `writer/experiment.yaml` (or the equivalent override).
+- Copy `elementary_sat_ite.coffee` to the mac-mini (via `scp` or normal writer-repo pull) so the recipe is available where the pipeline actually runs.
+- Consider whether the adapter's judge should be a DIFFERENT model than the generator (adversarial rigor). Currently both are Qwen2.5-3B-Instruct-mlx4.
+
+---
+
+## Prior handoff (2026-08-02 afternoon) — story-generation pipeline state, still current
 
 **Increments e5, e6, e7 all landed today.** e1–e4 shipped
 yesterday. The full arc is now:
