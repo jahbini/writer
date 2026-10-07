@@ -114,6 +114,53 @@ the same headline-task with different temperatures, then pick the
 winner. Shotgun generation. 0.6B's ~25s per call × 10 candidates
 = 4 minutes total for 10 headline candidates.
 
+## 2026-09-24 tournament confirmation
+
+Post-SAT-2 tournament (id `2026-09-23_0557`, all four contestants
+at their tuned params, 3 spines × single-elimination, RMS(R+W+C)
+ranking) delivered the same role assignment as this file's earlier
+draft but with cleaner evidence:
+
+- **hf__qwen__qwen3-0-6b — winner on brevity**. 3W-3L overall
+  record, but wins recognized specifically for the compression
+  pressure the small model applies to a spine. Confirms the
+  punctuation-model role (headlines, closers, captions, broadcast
+  bundles). Do NOT use as body/workhorse — its brevity is a
+  feature only at boundary positions.
+- **hf__qwen__qwen3-4b (base) — winner on malleability**. 4W-2L,
+  best net record. Described as "much more malleable and would
+  work for all advanced recipes." **This is the workhorse for
+  advanced recipes** (story, diary, oracle, celarien) — not
+  4B-Instruct.
+- **hf__qwen__qwen3-4b-instruct-2507 — dropped to 3-4** now that
+  matches are gated on both parties having SAT-2. Its previous
+  4W-1L came from unfair matchups against un-tuned opponents. Not
+  the workhorse. Still useful for judge-model + specific instruct
+  tasks (broadcast eval, KAG grading).
+- **hf__qwen__qwen3-1-7b — 3W-4L**. Middle-child performance.
+  Neither the compression punch of 0-6b nor the malleability of
+  4b. Reserve for specialty roles or shotgun-generation
+  candidate diversity.
+
+**Role assignment (durable, supersedes prior):**
+- Punctuation → 0-6b
+- Advanced body / workhorse → 4b (base)
+- Instruct-shaped tasks (judge, grade, broadcast eval) → 4b-Instruct-2507
+- Diversity / candidate spread → 1-7b
+
+Tuned params per pipe (durable, from SAT-2 sweep 2026-09-23):
+
+| pipe | temp | rep_penalty |
+|---|---|---|
+| 0-6b | 1.2 | 1.55 |
+| 1-7b | 1.2 | 1.55 |
+| 4b | 0.9 | 1.15 |
+| 4b-instruct-2507 | 0.9 | 1.55 |
+
+Small models need HIGH temp + HIGH rep_penalty to escape loop
+pathology at long generations; 4B runs cleanest at gentle
+rep_penalty.
+
 ## Related
 
 - `writer/GPT/story/voice_findings_2026-09-21.md` — per-model

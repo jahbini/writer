@@ -475,10 +475,15 @@
 
     <div class="grid">
       <div class="column">
-        <!-- Named panel slot: panels with column: 'before-outputs'
-             land here. Currently: pipeline_death (framework tier). -->
+        <!-- 2026-09-29 — top-of-column order fixed to:
+             pipeline_death → Outputs → steps.
+             Panel slot IDs unchanged so panels.coffee mappings still
+             work; only the DOM order changed. -->
+
+        <!-- 1. Pipeline Death (framework tier, lands in before-outputs). -->
         <div id="dynamic-panels-before-outputs"></div>
 
+        <!-- 2. Outputs. -->
         <section class="panel">
           <h2>Outputs</h2>
           <div class="button-row">
@@ -487,66 +492,32 @@
           <div id="out-files" class="files"></div>
         </section>
 
-        <!-- Named panel slot: column: 'after-outputs'. Currently:
-             diary_files (project tier, applies() gates on diary/ dir). -->
-        <div id="dynamic-panels-after-outputs"></div>
-
-
-        <section class="panel" data-default-collapsed="1">
-          <h2>Run History</h2>
-          <div id="run-history-meta" class="hint mono"></div>
-          <table class="steps">
-            <thead>
-              <tr><th>started</th><th>pipeline</th><th>status</th><th>run_id</th></tr>
-            </thead>
-            <tbody id="run-history-body"></tbody>
-          </table>
-          <div id="run-detail" class="hint mono" style="margin-top:8px; white-space:pre-wrap;"></div>
-        </section>
-
-        <!-- Named panel slot: column: 'after-history'. Currently:
-             steps (framework tier). -->
+        <!-- 3. Steps (framework tier, lands in after-history slot).
+             Moved above after-outputs / dynamic-panels per requested
+             ordering. -->
         <div id="dynamic-panels-after-history"></div>
 
-        <!-- Default sink for panels declaring column: 'left' (or no
-             column). Moved from the bottom-of-column to right after
-             the after-history slot so log_files lands next to steps
-             per the requested order (pipeline_death, outputs, diary,
-             run history, steps, logs, then everything else). -->
+        <!-- Below-the-fold: after-outputs slot (diary_files project
+             tier) and the default sink (log_files etc.). -->
+        <div id="dynamic-panels-after-outputs"></div>
         <div id="dynamic-panels"></div>
 
-        <section class="panel" data-default-collapsed="1">
-          <h2>Stories</h2>
-          <div id="sqlite-stories-meta" class="hint mono"></div>
-          <table class="steps">
-            <thead>
-              <tr><th>story_id</th><th>title</th></tr>
-            </thead>
-            <tbody id="sqlite-stories-body"></tbody>
-          </table>
-        </section>
+        <!-- 2026-09-29 — "Stories" panel removed. Was calling
+             /api/sqlite/allStories.jsonl, a route that never existed
+             on the writer or puppeteer ui_server, so it always
+             errored. sqlite `stories` table is authoritative; a
+             human can query it directly if needed. -->
 
-        <section class="panel" data-default-collapsed="1">
-          <h2>Training Runs</h2>
-          <div id="sqlite-training-runs-meta" class="hint mono"></div>
-          <table class="steps">
-            <thead>
-              <tr><th>started</th><th>run_id</th><th>train rows</th><th>status</th></tr>
-            </thead>
-            <tbody id="sqlite-training-runs-body"></tbody>
-          </table>
-        </section>
+        <!-- 2026-09-29 — "Training Runs" panel removed. The record
+             is a byproduct of a LoRA training run and belongs
+             conceptually with the elementary_ite training summary,
+             not a standalone panel. Data remains in each pipe's
+             `lora_training_runs` sqlite table. -->
 
-        <section class="panel" data-default-collapsed="1">
-          <h2>Story Usage (LoRA)</h2>
-          <div id="sqlite-usage-meta" class="hint mono"></div>
-          <table class="steps">
-            <thead>
-              <tr><th>story_id</th><th>use_count</th><th>last_used</th></tr>
-            </thead>
-            <tbody id="sqlite-usage-body"></tbody>
-          </table>
-        </section>
+
+        <!-- 2026-09-29 — "Story Usage (LoRA)" panel removed. The
+             "stories remaining" line in the Run panel covers the
+             same information without a separate table. -->
 
         <!-- Steps moved to panel registry (2026-09-10). Uses
              render_hint 'custom' so renderSteps' bespoke table
@@ -1341,7 +1312,7 @@
       const files = value && Array.isArray(value.files) ? value.files : [];
       target.innerHTML =
         `<div class="button-row">
-          <button class="danger-button" type="button" onclick="clearLogs().catch(console.error)">Delete Log Files</button>
+          <button class="danger-button" type="button" onclick="clearLogs().catch(console.error)">Delete Logs Older Than 48h</button>
         </div>
         <div class="files" data-log-list></div>`;
       renderFiles(target.querySelector('[data-log-list]'), files);
@@ -1537,96 +1508,15 @@
     }
 
     async function refreshSqlitePanels() {
-      // Run History (the agent-surface step-3 panel: lists rows, click for /api/run/{id})
-      const history = await fetchSqliteRequest('runHistory.jsonl');
-      const hBody = byId('run-history-body');
-      const hMeta = byId('run-history-meta');
-      if (!history.ok || !Array.isArray(history.value)) {
-        hBody.innerHTML = '';
-        hMeta.textContent = history.ok ? '(no rows — runs table empty until first launch with new runner)' : `error: ${history.error}`;
-      } else {
-        const rows = history.value;
-        const head = rows.slice(0, SQLITE_PANEL_LIMIT);
-        hMeta.textContent = `${rows.length} total${rows.length > head.length ? ` (showing newest ${head.length})` : ''}`;
-        hBody.innerHTML = head.map((row) => `
-          <tr data-run-id="${escapeHtml(row.run_id)}" style="cursor:pointer">
-            <td class="mono">${escapeHtml(formatLocalTime(row.started_at || ''))}</td>
-            <td class="mono">${escapeHtml(row.pipeline ?? '')}</td>
-            <td>${escapeHtml(row.status ?? '')}</td>
-            <td class="mono">${escapeHtml((row.run_id || '').slice(0, 8))}…</td>
-          </tr>
-        `).join('');
-        // Re-bind click handlers (innerHTML wipes them).
-        for (const tr of hBody.querySelectorAll('tr[data-run-id]')) {
-          tr.addEventListener('click', () => loadRunDetail(tr.dataset.runId));
-        }
-        // If a run is currently being inspected, refresh its detail too.
-        if (currentRunDetailId) loadRunDetail(currentRunDetailId).catch(console.error);
-      }
+      // 2026-09-29 — Run History fetch + render removed. Cross-pipe
+      // view lives on the puppeteer's Peer Session History panel.
 
-      // Stories
-      const stories = await fetchSqliteRequest('allStories.jsonl');
-      const sBody = byId('sqlite-stories-body');
-      const sMeta = byId('sqlite-stories-meta');
-      if (!stories.ok || !Array.isArray(stories.value)) {
-        sBody.innerHTML = '';
-        sMeta.textContent = stories.ok ? '(no rows)' : `error: ${stories.error}`;
-      } else {
-        const rows = stories.value;
-        const head = rows.slice(0, SQLITE_PANEL_LIMIT);
-        sMeta.textContent = `${rows.length} total${rows.length > head.length ? ` (showing first ${head.length})` : ''}`;
-        sBody.innerHTML = head.map((row) => `
-          <tr>
-            <td class="mono">${escapeHtml(row.story_id ?? '')}</td>
-            <td>${escapeHtml(row.title ?? '')}</td>
-          </tr>
-        `).join('');
-      }
+      // 2026-09-29 — Stories fetch + render removed.
 
-      // Training Runs
-      const runs = await fetchSqliteRequest('loraTrainingRuns.jsonl');
-      const rBody = byId('sqlite-training-runs-body');
-      const rMeta = byId('sqlite-training-runs-meta');
-      if (!runs.ok || !Array.isArray(runs.value)) {
-        rBody.innerHTML = '';
-        rMeta.textContent = runs.ok ? '(no rows)' : `error: ${runs.error}`;
-      } else {
-        // Show newest first; the meta layer typically orders by started_at DESC,
-        // but defensively sort here so the panel is consistent regardless.
-        const rows = runs.value.slice().sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')));
-        const head = rows.slice(0, SQLITE_PANEL_LIMIT);
-        rMeta.textContent = `${rows.length} total${rows.length > head.length ? ` (showing newest ${head.length})` : ''}`;
-        rBody.innerHTML = head.map((row) => `
-          <tr>
-            <td class="mono">${escapeHtml(formatLocalTime(row.started_at || ''))}</td>
-            <td class="mono">${escapeHtml(row.run_id ?? '')}</td>
-            <td class="mono">${escapeHtml(row.train_rows_count ?? '')}</td>
-            <td>${escapeHtml(row.status ?? '')}</td>
-          </tr>
-        `).join('');
-      }
+      // 2026-09-29 — Training Runs fetch + render removed.
 
-      // Story Usage (LoRA)
-      const usage = await fetchSqliteRequest('loraStoryUsage.jsonl');
-      const uBody = byId('sqlite-usage-body');
-      const uMeta = byId('sqlite-usage-meta');
-      if (!usage.ok || !Array.isArray(usage.value)) {
-        uBody.innerHTML = '';
-        uMeta.textContent = usage.ok ? '(no rows)' : `error: ${usage.error}`;
-      } else {
-        // Highest use_count first — most-trained stories surface at the top.
-        const rows = usage.value.slice().sort((a, b) => Number(b.use_count || 0) - Number(a.use_count || 0));
-        const head = rows.slice(0, SQLITE_PANEL_LIMIT);
-        const totalUsed = rows.filter((r) => Number(r.use_count || 0) > 0).length;
-        uMeta.textContent = `${rows.length} tracked, ${totalUsed} trained${rows.length > head.length ? ` (showing top ${head.length})` : ''}`;
-        uBody.innerHTML = head.map((row) => `
-          <tr>
-            <td class="mono">${escapeHtml(row.story_id ?? '')}</td>
-            <td class="mono">${escapeHtml(row.use_count ?? 0)}</td>
-            <td class="mono">${escapeHtml(formatLocalTime(row.last_trained_at || ''))}</td>
-          </tr>
-        `).join('');
-      }
+      // 2026-09-29 — Story Usage (LoRA) fetch + render removed.
+      // Same info is on the Run panel's "stories remaining" line.
     }
 
     function renderKillButton(run) {
@@ -2530,7 +2420,7 @@
         if (!res.ok || !data.ok) {
           throw new Error(data.error || 'clear logs failed');
         }
-        result.textContent = `deleted ${data.removed} log file(s)`;
+        result.textContent = `deleted ${data.removed} log file(s) older than ${data.older_than_hours ?? 48}h; kept ${data.kept ?? 0}`;
         await refresh();
       } catch (err) {
         result.textContent = String(err.message || err);

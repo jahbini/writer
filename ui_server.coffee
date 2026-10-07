@@ -1033,7 +1033,11 @@ isAllowedFilePath = (relativePath) ->
   return false unless typeof relativePath is 'string' and relativePath.length
   normalized = path.normalize(relativePath)
   return false if normalized.startsWith('..') or path.isAbsolute(normalized)
-  /^logs\//.test(normalized) or /^out\//.test(normalized) or /^diary\//.test(normalized) or /^build\//.test(normalized) or /^tested\//.test(normalized)
+  # 2026-09-28 — added data/, params/, override/ so pipeline_svg's
+  # implicit-input nodes (files referenced by step params but not
+  # declared in `artifacts:`) can be inspected from the graph. All
+  # three are pipe-local text config; no secrets.
+  /^logs\//.test(normalized) or /^out\//.test(normalized) or /^diary\//.test(normalized) or /^build\//.test(normalized) or /^tested\//.test(normalized) or /^data\//.test(normalized) or /^params\//.test(normalized) or /^override\//.test(normalized)
 
 readViewerFile = (relativePath) ->
   return null unless isAllowedFilePath(relativePath)
@@ -1863,18 +1867,35 @@ handleClearPipelineState = (req, res) ->
 # pipe's logs/ dir. logs/ is transient single-run scratch, so this is safe;
 # it just keeps the Logs panel from growing without bound.
 handleClearLogs = (req, res) ->
+  # 2026-09-29 — was filtered to files matching
+  # `<name>_HH_MM.(log|err)` only, leaving ui_server.log, subdirs,
+  # and any oddly-named file behind, so the logs panel kept growing.
+  # New behavior: delete every regular file under `logs/` whose mtime
+  # is older than 48 hours. Subdirectories are left alone.
   logDir = path.join(CWD, 'logs')
   removed = 0
+  kept = 0
+  ageCutoffMs = 48 * 60 * 60 * 1000
+  now = Date.now()
   if fs.existsSync(logDir)
-    for name in fs.readdirSync(logDir) when /^[A-Za-z0-9_-]+_\d{2}_\d{2}\.(log|err)$/.test(name)
+    for name in fs.readdirSync(logDir)
+      full = path.join(logDir, name)
       try
-        fs.unlinkSync path.join(logDir, name)
-        removed += 1
+        st = fs.statSync(full)
+        continue unless st.isFile()
+        ageMs = now - st.mtimeMs
+        if ageMs > ageCutoffMs
+          fs.unlinkSync full
+          removed += 1
+        else
+          kept += 1
       catch
         null
   sendJson res, 200,
     ok: true
     removed: removed
+    kept: kept
+    older_than_hours: 48
 
 # Delete the contents of the pipe's out/ dir (top-level files and subdirs like
 # out/eval/). out/ is transient single-run scratch — the next run regenerates
@@ -2323,29 +2344,53 @@ server = http.createServer (req, res) ->
         params_text = fs.readFileSync paramsFile, 'utf8'
       catch err
         paramsErr = String(err?.message ? err)
-    # 2026-09-07: liveness override. step-<name>.json is only rewritten
-    # when the runner exits cleanly. If the runner crashed / was killed
-    # mid-step, the file is left with status: 'running' forever. The
-    # UI keeps showing "running" even though the process is dead. Fix:
-    # check the parent runner's pid (from state/ui-run.json). If the
-    # pid is not alive and the step file says 'running', override the
-    # returned state to 'crashed_stale' so the UI is truthful. Leaves
-    # the on-disk file alone — the startup sweep in pipeline_runner
-    # will rewrite it to 'crashed' next run.
+    # 2026-09-28: reap-on-read + persist. step-<name>.json is only
+    # rewritten when the runner exits cleanly, so SIGKILL/OOM/crash
+    # leaves the file with status: 'running' forever. Three checks,
+    # in order — first hit wins:
+    #   1. Step's own `pid` field (added 2026-09-28 by markRunning)
+    #      is dead → definitely stale.
+    #   2. Parent runner's pid in ui-run.json is dead → also stale.
+    #   3. `updated_at` is older than 15 min → almost certainly stale
+    #      (used only when neither pid is available, e.g. old files).
+    # When stale, rewrite the file to `died` so the fix is persistent
+    # AND the aggregate lists (steps panel, peer_sessions) see it.
     if state?.status is 'running'
+      deadReason = null
       try
-        runFile = path.join(CWD, 'state', 'ui-run.json')
-        if fs.existsSync runFile
-          runData = JSON.parse fs.readFileSync(runFile, 'utf8')
-          runPid = Number(runData?.pid ? 0)
-          if runPid > 0 and not isProcessAlive(runPid)
-            state = Object.assign {}, state,
-              status: 'crashed_stale'
-              liveness_override: true
-              liveness_note: "runner pid #{runPid} is dead; step file says 'running' but no process is alive. On-disk file will be rewritten on next run by startup sweep."
-              runner_pid: runPid
+        if Number(state.pid ? 0) > 0 and not isProcessAlive(Number(state.pid))
+          deadReason = "step pid #{state.pid} is dead"
       catch
         null
+      unless deadReason?
+        try
+          runFile = path.join(CWD, 'state', 'ui-run.json')
+          if fs.existsSync runFile
+            runData = JSON.parse fs.readFileSync(runFile, 'utf8')
+            runPid = Number(runData?.pid ? 0)
+            if runPid > 0 and not isProcessAlive(runPid)
+              deadReason = "runner pid #{runPid} is dead"
+        catch
+          null
+      unless deadReason?
+        try
+          # Staleness heuristic: no pid available AND file untouched
+          # for 15+ minutes → treat as dead. Guards old files that
+          # predate the pid field.
+          hasPid = Number(state.pid ? 0) > 0 or (try Number(JSON.parse(fs.readFileSync(path.join(CWD, 'state', 'ui-run.json'), 'utf8'))?.pid ? 0) catch then 0) > 0
+          unless hasPid
+            updated = Date.parse(state.updated_at ? '') or Date.parse(state.started_at ? '')
+            if Number.isFinite(updated) and (Date.now() - updated) > 15 * 60 * 1000
+              deadReason = "no pid recorded and stale for #{Math.round((Date.now() - updated) / 60000)}m"
+        catch
+          null
+      if deadReason?
+        state = Object.assign {}, state,
+          status: 'died'
+          finished_at: state.finished_at ? new Date().toISOString()
+          reason: deadReason
+          liveness_override: true
+        try fs.writeFileSync stateFile, JSON.stringify(state, null, 2), 'utf8'
     return sendJson res, 200,
       ok: true
       name: name
