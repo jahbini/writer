@@ -5,8 +5,8 @@
   "description": "Multi-pipe starter for @jahbini/pipeline. Shared model in build/, multiple application pipes under pipes/. Each pipe is a working directory only; the MLX venv lives at the project base (./.venv, resolved via the runner's BASE lookup) and the UI is shared at the top.",
   "scripts": {
     "setup": "./run-first.sh",
-    "ui": "EXEC=$PWD/node_modules/@jahbini/pipeline coffee ui_server.coffee",
-    "ui:reset": "cp -r ./node_modules/@jahbini/pipeline/ui ./ui && cp ./node_modules/@jahbini/pipeline/ui_server.coffee ./ui_server.coffee && chmod +x ./ui_server.coffee",
+    "ui": "coffee ./node_modules/@jahbini/pipeline/ui_server.coffee",
+    "ui:net": "coffee ./node_modules/@jahbini/pipeline/ui_server.coffee net",
     "pipe:new": "./bin/pipe-new.sh",
     "clean": "rm -rf .venv build/* pipes/*/state pipes/*/env pipes/*/logs pipes/*/runtime.sqlite* pipes/*/experiment.yaml pipes/*/params pipes/*/tested pipes/*/out pipes/*/data pipes/*/pipeline.json pipes/*/override pipes/*/control_override.yaml pipes/*/.venv && touch build/.gitkeep"
   },

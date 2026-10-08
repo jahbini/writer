@@ -16,8 +16,14 @@ pipeline-pipes/
     my_lora_run/   ← another application — its own override, etc.
       ...
   ui/index.html    ← project-owned UI frontend
-  ui_server.coffee ← project-owned UI server (PIPES_ROOT → ./pipes)
+  ui/project.coffee ← project-specific plugin (routes + panels)
 ```
+
+The UI server itself lives in `@jahbini/pipeline` and is launched via
+`pnpm run ui`. The plugin at `ui/project.coffee` adds this project's
+routes (`/api/create_pipe`, `/api/storacle_observation(s)`,
+`/pipe/<name>` deep-link) and panel registry on top. See
+`pipeline/GPT/ui/plugin_system.md`.
 
 Each pipe is its own working directory: separate `state/`, `logs/`,
 `out/`. The model in `build/` is shared. The Python venv in `.venv/`
@@ -115,18 +121,23 @@ Downstream steps that need the quantized model reference
 `quantized_dir` via their own params (typically
 `quantized_model_dir`) — again pinned in the pipe's override.yaml.
 
-## Project-owned UI is yours to hack
+## Project-owned UI plugin is yours to hack
 
-The starter ships the entire UI stack — `ui_server.coffee` and
-`ui/index.html` — at the project root, not buried in
-`node_modules/`. Edit them freely; the runner package's defaults
-won't overwrite your changes. If you ever want to start over from
-the package's current defaults: `npm run ui:reset`.
+The UI server (`ui_server.coffee`) lives in `@jahbini/pipeline` and
+is shared across projects. What you customize is the **plugin** at
+`ui/project.coffee` plus the static frontend at `ui/index.html` —
+both at the project root. The plugin adds this project's routes
+(`/api/create_pipe`, `/api/storacle_observation(s)`, `/pipe/<name>`
+deep-link) and threads project-specific helpers into the panel
+registry. The library auto-loads it by walking up from `process.cwd()`.
 
-The UI's pipe-switcher uses the runner's existing `handleSwitchPipe`
+The UI's pipe-switcher calls the library's `handleSwitchPipe`
 endpoint: it creates `pipes/<name>/{state,logs}/` if missing, then
-re-launches the *project-owned* UI server (this file) with the pipe
-as the working directory. Customizations survive the relaunch.
+re-launches the library server with the pipe as the working
+directory. The plugin walk-up re-resolves to this project's
+`ui/project.coffee` so customizations survive the relaunch.
+
+See `pipeline/GPT/ui/plugin_system.md` for the plugin contract.
 
 ## Resetting
 

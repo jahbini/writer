@@ -1,5 +1,12 @@
 Area: `ui_server.coffee` + `ui/index.html`
 
+**2026-10-08 cutover**: writer's `ui_server.coffee` is DEPRECATED.
+The writer now runs under `pipeline/ui_server.coffee` + the
+`ui/project.coffee` plugin. See `[[project_plugin]]` for the writer-
+specific routes (create_pipe, storacle observations) and
+`pipeline/GPT/ui/plugin_system.md` for the plugin contract. The old
+file remains on disk pending deletion.
+
 Purpose:
 - provide the pipe-local UI for selecting recipes, editing overrides, launching runs, and inspecting outputs/logs
 

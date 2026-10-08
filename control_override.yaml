@@ -1,1 +1,3 @@
-pipeline: celarien_run
+pipeline: prompt_llm
+generate_prompt_llm:
+  prompt_text: where is the golden gate bridge?
