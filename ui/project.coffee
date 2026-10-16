@@ -14,9 +14,13 @@ fs   = require 'fs'
 path = require 'path'
 
 init = (ctx) ->
-  {CWD, EXEC_ROOT, BASE_ROOT, sendJson, readRequestBody, readJson, readText, writeText, listFiles, describeOutputFile, normalizeUiRun} = ctx
+  {CWD, EXEC_ROOT, BASE_ROOT, sendJson, readRequestBody, readJson, readText, writeText, listFiles, describeOutputFile, normalizeUiRun, yaml} = ctx
   {DatabaseSync} = require 'node:sqlite'
   {spawn} = require 'child_process'
+  # Fallback: if the library didn't put yaml in ctx (older library),
+  # require it ourselves so the certificate endpoints don't throw
+  # "yaml is not defined" on grade submit.
+  yaml = require 'js-yaml' unless yaml?
 
   PIPES_ROOT = path.join(BASE_ROOT, 'pipes')
   # Must come from ctx — the library binds to argv[2]='net' but doesn't
@@ -31,10 +35,18 @@ init = (ctx) ->
   handleDeepLinkPipe = (req, res) ->
     url = req.url ? ''
     pipeName = null
+    queryString = ''
     if url.startsWith '/pipe/'
-      pipeName = decodeURIComponent(url.slice('/pipe/'.length).split('?')[0].split('#')[0])
+      rest = url.slice('/pipe/'.length)
+      qIdx = rest.indexOf('?')
+      if qIdx >= 0
+        pipeName = decodeURIComponent(rest.slice(0, qIdx).split('#')[0])
+        queryString = rest.slice(qIdx + 1).split('#')[0]
+      else
+        pipeName = decodeURIComponent(rest.split('#')[0])
     else if url.startsWith '/?pipe='
       pipeName = decodeURIComponent(url.slice('/?pipe='.length).split('&')[0].split('#')[0])
+      queryString = url.slice('/?'.length)
     return sendBadDeepLink(res, 'no pipe in URL') unless pipeName?
     pipeName = String(pipeName).trim()
     if not pipeName.length or pipeName.includes('/') or pipeName.includes(path.sep) or pipeName in ['.', '..']
@@ -44,7 +56,38 @@ init = (ctx) ->
       res.writeHead 404, {'Content-Type': 'text/html; charset=utf-8'}
       return res.end "<h3>pipe not found: <code>#{pipeName}</code></h3><p><a href='/'>home</a></p>"
 
-    # Send the "switching..." HTML now, then respawn.
+    # Parse ?action=storacle|sat. Writes control_override.yaml BEFORE
+    # the respawn so the new ui_server comes up with that recipe active.
+    # Does NOT auto-run — the human still clicks the launch button in
+    # the pipe's UI after reviewing params. Called from puppeteer's
+    # "Needs certificate" bucket links.
+    action = null
+    if queryString.length
+      for kv in queryString.split('&')
+        [k, v] = kv.split('=')
+        if decodeURIComponent(k ? '') is 'action'
+          action = decodeURIComponent(v ? '').trim().toLowerCase()
+    ACTION_TO_RECIPE =
+      storacle: 'storacle'
+      sat:      'sat_scan'
+    if action and ACTION_TO_RECIPE[action]?
+      try
+        fs.writeFileSync path.join(targetCwd, 'control_override.yaml'),
+          "pipeline: #{ACTION_TO_RECIPE[action]}\n", 'utf8'
+        console.log "[deeplink] #{pipeName} action=#{action} → control_override.yaml pipeline=#{ACTION_TO_RECIPE[action]}"
+      catch err
+        console.error "[deeplink] #{pipeName} failed to write control_override: #{err?.message ? err}"
+    else if action
+      console.warn "[deeplink] #{pipeName} unknown action=#{action} (ignored)"
+
+    # 2026-10-09 — wait for the HTML to actually drain to the socket
+    # before exiting. Prior code set a 150 ms exit timer right after
+    # res.end(); if the kernel hadn't flushed the TCP send buffer yet,
+    # the client (notably Safari 27) saw a mid-response reset, retried
+    # the request, and hit the NEW post-respawn server with its full
+    # UI — defeating the point of the fast "Switching…" transition
+    # page. res.end's callback fires only when the stream has drained;
+    # using it eliminates the race.
     html = """
       <!doctype html><meta charset="utf-8">
       <title>switching to #{pipeName}…</title>
@@ -54,33 +97,41 @@ init = (ctx) ->
       <p>UI is respawning. This page reloads in ~3 seconds.</p>
       <p><a href="/">Go now</a></p>
     """
-    res.writeHead 200, {'Content-Type': 'text/html; charset=utf-8'}
-    res.end html
-
-    # Respawn the same ui_server entry at the target CWD. Mirrors the
-    # library's handleSwitchPipe (coffee <main> net, sleep 1 in a bash
-    # wrapper so the port window closes cleanly, UI_PORT propagated).
-    fs.mkdirSync path.join(targetCwd, 'state'), { recursive: true }
-    fs.mkdirSync path.join(targetCwd, 'logs'),  { recursive: true }
-    uiServerPath =
-      if typeof require.main?.filename is 'string' and require.main.filename.length
-        require.main.filename
-      else
-        path.join(EXEC_ROOT, 'ui_server.coffee')
-    port    = Number(process.env.UI_PORT ? module.exports.portDefault)
-    netArg  = if UI_BIND_MODE is 'net' then ' net' else ''
-    launchArgs = ['-lc', "sleep 1 && exec coffee #{JSON.stringify(uiServerPath)}#{netArg}"]
-    child = spawn 'bash', launchArgs,
-      cwd:      targetCwd
-      detached: true
-      stdio:    'ignore'
-      env: Object.assign {}, process.env,
-        EXEC:         EXEC_ROOT
-        CWD:          targetCwd
-        UI_PORT:      String(port)
-        UI_BIND_MODE: UI_BIND_MODE
-    child.unref()
-    setTimeout((-> process.exit(0)), 150)
+    res.writeHead 200,
+      'Content-Type':   'text/html; charset=utf-8'
+      'Content-Length': Buffer.byteLength(html)
+      'Connection':     'close'
+    res.end html, ->
+      # Response is now flushed to the socket. Safe to respawn.
+      try
+        fs.mkdirSync path.join(targetCwd, 'state'), { recursive: true }
+        fs.mkdirSync path.join(targetCwd, 'logs'),  { recursive: true }
+      catch
+        null
+      uiServerPath =
+        if typeof require.main?.filename is 'string' and require.main.filename.length
+          require.main.filename
+        else
+          path.join(EXEC_ROOT, 'ui_server.coffee')
+      port   = Number(process.env.UI_PORT ? module.exports.portDefault)
+      netArg = if UI_BIND_MODE is 'net' then ' net' else ''
+      # bash sleep 1 keeps the port-free window honored — parent dies
+      # right after this callback, child binds at t≈1s so the browser's
+      # meta-refresh (at t=3s) hits a fresh server.
+      launchArgs = ['-lc', "sleep 1 && exec coffee #{JSON.stringify(uiServerPath)}#{netArg}"]
+      child = spawn 'bash', launchArgs,
+        cwd:      targetCwd
+        detached: true
+        stdio:    'ignore'
+        env: Object.assign {}, process.env,
+          EXEC:         EXEC_ROOT
+          CWD:          targetCwd
+          UI_PORT:      String(port)
+          UI_BIND_MODE: UI_BIND_MODE
+      child.unref()
+      # Short additional grace so any remaining kernel TX buffer is
+      # drained before the process actually exits.
+      setTimeout((-> process.exit(0)), 50)
 
   sendBadDeepLink = (res, msg) ->
     res.writeHead 400, {'Content-Type': 'text/html; charset=utf-8'}
@@ -108,12 +159,39 @@ init = (ctx) ->
     pipeDir = path.join(PIPES_ROOT, name)
     return sendJson(res, 409, { ok: false, error: "pipes/#{name} already exists" }) if fs.existsSync(pipeDir)
 
+    # 2026-10-09 — refuse to pin paths with a silent $HOME/models
+    # fallback. The old fallback leaked ~/theaiguy/models into every
+    # pipe override.yaml when launchd ran without MODELS in env.
+    # 2026-10-10 — MODELS canonically carries a GLOB like
+    # `/Volumes/bigbig*/models`. macOS DiskArb sometimes remounts the
+    # bigbig volume as `/Volumes/bigbig 1/` after a stale Time Machine
+    # snapshot clears the plain name; the glob catches whichever
+    # variant is actually mounted. Resolve the glob here at creation
+    # time via `ls -d` so the pipe's override.yaml carries the
+    # resolved literal.
+    modelsRaw = String(process.env.MODELS ? '').trim()
+    return sendJson(res, 500,
+      ok:    false
+      error: 'MODELS env not set — refusing to pin pipe paths with a $HOME/models fallback. Set MODELS=/Volumes/bigbig*/models in the plist / shell env, then retry.'
+    ) unless modelsRaw.length
+    modelsRoot = modelsRaw
+    if modelsRaw.includes('*')
+      try
+        {execSync} = require 'child_process'
+        resolved = String(execSync("ls -d #{modelsRaw} 2>/dev/null | head -1", encoding: 'utf8')).trim()
+      catch
+        resolved = ''
+      return sendJson(res, 500,
+        ok:    false
+        error: "MODELS glob #{modelsRaw} did not match any mounted dir — is /Volumes/bigbig* mounted?"
+      ) unless resolved.length
+      modelsRoot = resolved
+
     try
       fs.mkdirSync pipeDir, { recursive: true }
       for sub in ['state', 'logs', 'out']
         fs.mkdirSync path.join(pipeDir, sub), { recursive: true }
 
-      modelsRoot = process.env.MODELS ? path.join(process.env.HOME, 'models')
       baseModelPath      = path.join(modelsRoot, model)
       quantizedModelPath = path.join(modelsRoot, "#{model}-mlx4")
       overrideText = """
@@ -374,17 +452,203 @@ init = (ctx) ->
     catch err
       console.error "[writer-project] eager panels failed: #{err?.message ? err}"
       status.panels_data = {}
+    # Plugin seam: writer always runs inside a pipe (pipes/<name>/).
+    c = status?.controls
+    if c?
+      c.ui_plugin = 'writer'
+      c.scope    ?= 'pipe-scope'
+      # Recipe-selector unfilter. Shared's detectLifecycleStage() returns
+      # 'newborn' whenever the pipe lacks `out/certificate.yaml` and an
+      # `out/certificates/` archive — which is the normal state for a
+      # working writer pipe (certs are archived to the puppeteer, not
+      # kept locally). The resulting ['newborn']-only dropdown is a
+      # show-stopper. Writer is an authoring tool, not an onboarding
+      # wizard; show every recipe. Preserve `lifecycle_stage` so the
+      # badge still names the stage honestly.
+      c.pipelines_enriched = c.pipelines_all if c.pipelines_all?
     return
+
+  # ── /api/writer/ui.js — browser plugin for the shared pipeline UI ──
+  # Served to the shared UI when controls.ui_plugin === 'writer'.
+  # Loads writer/ui/plugin.js (certificate panel + storacle observations
+  # + env_overrides badge).
+  PLUGIN_JS_PATH = path.join(__dirname, 'plugin.js')
+  handleApiPluginJs = (req, res) ->
+    unless fs.existsSync PLUGIN_JS_PATH
+      res.writeHead 404, {'Content-Type': 'text/plain; charset=utf-8'}
+      return res.end '// writer/ui/plugin.js not found'
+    res.writeHead 200, {'Content-Type': 'application/javascript; charset=utf-8'}
+    res.end fs.readFileSync(PLUGIN_JS_PATH, 'utf8')
+
+  # ── /api/certificate (GET / POST) ────────────────────────────
+  # Certificate = frozen snapshot of a human-graded storacle run.
+  # Lifecycle: human runs storacle, reviews out/storacle_text.txt +
+  # out/storacle_meta.json, picks a verdict (pass | hospital |
+  # graveyard), types comments, POSTs → writer writes
+  # out/certificate.yaml with the test details frozen from
+  # storacle_meta.json + storacle_text.txt + stories.text from
+  # runtime.sqlite. Puppeteer scans certificates on its next tick,
+  # applies the verdict (promote / hospital / rejected), then
+  # archives the file to out/certificates/<stage>-<graded_at>.yaml.
+  # See writer/GPT/story/certificate.md for the full contract.
+  OUT_DIR          = -> path.join(CWD, 'out')
+  STORACLE_META    = -> path.join(OUT_DIR(), 'storacle_meta.json')
+  STORACLE_RAW     = -> path.join(OUT_DIR(), 'storacle_raw.txt')
+  STORACLE_TEXT    = -> path.join(OUT_DIR(), 'storacle_text.txt')
+  CERTIFICATE_PATH = -> path.join(OUT_DIR(), 'certificate.yaml')
+  CERTIFICATES_DIR = -> path.join(OUT_DIR(), 'certificates')
+  PIPE_RUNTIME_DB  = -> path.join(CWD, 'runtime.sqlite')
+  PIPE_STATES_FILE = -> path.join(BASE_ROOT, 'state', 'pipe_states.json')
+
+  readPipeStateForCwd = ->
+    try
+      states = JSON.parse(fs.readFileSync(PIPE_STATES_FILE(), 'utf8'))
+      pipeName = path.basename(CWD)
+      states?[pipeName]?.state ? 'continue'
+    catch
+      'continue'
+
+  stageFromState = (state) ->
+    switch state
+      when 'newborn'   then 'newborn'
+      when 'SAT'       then 'SAT'
+      when 'graduated' then 'tournament'
+      when 'continue'  then 'elementary'
+      when 'hospital'  then 'hospital'
+      when 'rejected'  then 'graveyard'
+      else state ? 'unknown'
+
+  readStoryText = (storyId) ->
+    return null unless storyId? and storyId.length
+    return null unless fs.existsSync(PIPE_RUNTIME_DB())
+    db = null
+    try
+      db = new DatabaseSync(PIPE_RUNTIME_DB())
+      row = db.prepare('SELECT title, text FROM stories WHERE story_id = ?').get(storyId)
+      row ? null
+    catch
+      null
+    finally
+      try db?.close() catch then null
+
+  handleCertificateGet = (req, res) ->
+    pipeName = path.basename(CWD)
+    state    = readPipeStateForCwd()
+    stage    = stageFromState(state)
+    hasStoracle = fs.existsSync(STORACLE_META())
+    body =
+      ok:                  true
+      pipe:                pipeName
+      state:               state
+      stage:               stage
+      storacle_present:    hasStoracle
+      storacle_meta:       null
+      storacle_text:       null
+      current_certificate: null
+    if hasStoracle
+      try body.storacle_meta = JSON.parse(fs.readFileSync(STORACLE_META(), 'utf8'))
+      textPath = if fs.existsSync(STORACLE_TEXT()) then STORACLE_TEXT() else STORACLE_RAW()
+      try body.storacle_text = fs.readFileSync(textPath, 'utf8')
+    if fs.existsSync(CERTIFICATE_PATH())
+      try body.current_certificate = yaml.load(fs.readFileSync(CERTIFICATE_PATH(), 'utf8'))
+    sendJson res, 200, body
+
+  handleCertificatePost = (req, res) ->
+    bodyText = await readRequestBody req
+    payload = {}
+    try payload = JSON.parse(bodyText ? '{}') catch
+      return sendJson res, 400, {ok: false, error: 'invalid json body'}
+    verdict  = String(payload.verdict ? '').trim().toLowerCase()
+    comments = String(payload.comments ? '')
+    gradedBy = String(payload.graded_by ? '').trim() or null
+    return sendJson(res, 400, {ok: false, error: "verdict must be pass | hospital | graveyard, got #{verdict}"}) unless verdict in ['pass', 'hospital', 'graveyard']
+
+    # #5 — no storacle = failure. Human can't certify a run that
+    # didn't happen; refuse before any state transition.
+    return sendJson(res, 400, {ok: false, error: 'no storacle output in out/ — nothing to certify'}) unless fs.existsSync(STORACLE_META())
+
+    meta = null
+    try meta = JSON.parse(fs.readFileSync(STORACLE_META(), 'utf8'))
+    return sendJson(res, 400, {ok: false, error: 'storacle_meta.json unreadable'}) unless meta? and typeof meta is 'object'
+    textPath = if fs.existsSync(STORACLE_TEXT()) then STORACLE_TEXT() else STORACLE_RAW()
+    responseText = try fs.readFileSync(textPath, 'utf8') catch then ''
+    storyRow = readStoryText(meta.story_id)
+    storyText = storyRow?.text ? null
+    storyTitle = storyRow?.title ? null
+
+    pipeName = path.basename(CWD)
+    state    = readPipeStateForCwd()
+    stage    = stageFromState(state)
+
+    gradedAt = new Date().toISOString()
+    cert =
+      pipe:  pipeName
+      stage: stage
+      test:
+        prompt_text:  meta.template_text ? null
+        story_id:     meta.story_id ? null
+        story_title:  storyTitle
+        story_text:   storyText
+        response:     responseText
+        llm:
+          model_dir:         meta.model_dir ? null
+          adapter_path:      meta.adapter_path ? null
+          temperature:       meta.llm_config?.temperature ? null
+          maxTokens:         meta.llm_config?.maxTokens ? null
+          topP:              meta.llm_config?.topP ? null
+          repetition_penalty: meta.llm_config?.repetition_penalty ? null
+          presence_penalty:  meta.llm_config?.presence_penalty ? null
+          think_prefill:     meta.llm_config?.think_prefill ? null
+        generated_at: meta.generated_at ? null
+        prompt_tokens:    meta.prompt_tokens ? null
+        generated_tokens: meta.generated_tokens ? null
+        elapsed_sec:      meta.elapsed_sec ? null
+      grade:
+        verdict:   verdict
+        comments:  comments
+        graded_at: gradedAt
+        graded_by: gradedBy
+
+    # If an un-consumed certificate exists already, archive it before
+    # overwriting — the human may have graded one certificate the
+    # puppeteer scanner hasn't picked up yet; preserving it keeps the
+    # audit trail honest.
+    try
+      if fs.existsSync(CERTIFICATE_PATH())
+        prev = yaml.load(fs.readFileSync(CERTIFICATE_PATH(), 'utf8')) ? {}
+        prevStage = String(prev.stage ? 'unknown')
+        prevTs    = String(prev.grade?.graded_at ? gradedAt).replace(/[:.]/g, '-')
+        fs.mkdirSync CERTIFICATES_DIR(), { recursive: true }
+        fs.renameSync CERTIFICATE_PATH(), path.join(CERTIFICATES_DIR(), "#{prevStage}-#{prevTs}.yaml")
+    catch err
+      console.error "[certificate] archive-of-prior failed: #{err?.message ? err}"
+
+    try
+      fs.mkdirSync OUT_DIR(), { recursive: true }
+      fs.writeFileSync CERTIFICATE_PATH(), yaml.dump(cert, lineWidth: 120, noRefs: true), 'utf8'
+    catch err
+      return sendJson res, 500, {ok: false, error: "write failed: #{err?.message ? err}"}
+
+    sendJson res, 200,
+      ok:        true
+      pipe:      pipeName
+      stage:     stage
+      verdict:   verdict
+      graded_at: gradedAt
+      path:      CERTIFICATE_PATH()
 
   routes: [
     {method: 'POST', path: '/api/create_pipe',             handler: handleCreatePipe}
     {method: 'GET',  path: '/api/storacle_observations',   handler: handleStoracleObservationsList}
     {method: 'POST', path: '/api/storacle_observation',    handler: handleStoracleObservationUpsert}
+    {method: 'GET',  path: '/api/certificate',             handler: handleCertificateGet}
+    {method: 'POST', path: '/api/certificate',             handler: handleCertificatePost}
     {method: 'GET',  pathPrefix: '/api/panel/',            handler: handlePanel}
     # Deep-link /pipe/<name> — puppeteer's peer_pipes panel links to
     # writer pipes via this URL. Must match before the library's
     # catch-all so the HTML switcher page is served.
     {method: 'GET',  pathPrefix: '/pipe/',                  handler: handleDeepLinkPipe}
+    {method: 'GET',  path: '/api/writer/ui.js',             handler: handleApiPluginJs}
   ]
   augmentStatus: augmentStatus
 

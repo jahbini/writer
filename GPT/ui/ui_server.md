@@ -1,11 +1,13 @@
 Area: `ui_server.coffee` + `ui/index.html`
 
-**2026-10-08 cutover**: writer's `ui_server.coffee` is DEPRECATED.
-The writer now runs under `pipeline/ui_server.coffee` + the
-`ui/project.coffee` plugin. See `[[project_plugin]]` for the writer-
-specific routes (create_pipe, storacle observations) and
-`pipeline/GPT/ui/plugin_system.md` for the plugin contract. The old
-file remains on disk pending deletion.
+**2026-10-08 cutover; 2026-10-16 deletion**: writer's own
+`ui_server.coffee` has been removed. The writer runs under the shared
+`pipeline/ui_server.coffee` + its `ui/project.coffee` plugin. See
+`[[project_plugin]]` for the writer-specific routes (create_pipe,
+storacle observations) and `pipeline/GPT/ui/plugin_system.md` for the
+plugin contract. The rest of this document is historical reference
+for the behaviors shared by the two surfaces — authoritative content
+now lives in `pipeline/GPT/ui/ui_server.md`.
 
 Purpose:
 - provide the pipe-local UI for selecting recipes, editing overrides, launching runs, and inspecting outputs/logs
