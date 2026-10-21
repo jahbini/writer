@@ -14,11 +14,14 @@
     "@frost-beta/llm": "^0.4.1",
     "@frost-beta/mlx": "^0.4.0",
     "@jahbini/pipeline": "github:jahbini/pipeline",
-    "js-yaml": "^5.4.0"
+    "js-yaml": "^5.5.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "@frost-beta/mlx"
-    ]
+    ],
+    "overrides": {
+      "@jahbini/pipeline": "link:../pipeline"
+    }
   }
 }
