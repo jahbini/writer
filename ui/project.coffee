@@ -28,6 +28,43 @@ init = (ctx) ->
   # returns 'local' and the respawn would silently drop to 127.0.0.1.
   UI_BIND_MODE = String(ctx.UI_BIND_MODE ? process.env.UI_BIND_MODE ? 'local')
 
+  # ── MARRIAGE Stage B — inventory publisher (the puppet announces) ──
+  # This writer IS a puppet. On a timer it scans its OWN pipes LOCALLY
+  # (cheap — no SSH) via the shared ctx.pipeInventory probe and publishes
+  # the snapshot to the memo key `sys/pipe_inventory/<host>`. The
+  # puppeteer controller then reads that snapshot instead of SSH-scanning
+  # this host (gated on `sys/peer_via_broker`, SSH fallback kept). This is
+  # the push half of "the puppet tells the puppeteer to use the
+  # inventory". Degrades to a no-op when ipc/broker is unavailable
+  # (memoRequest rejects → caught → retry next tick). Canonical scan lives
+  # in pipeline/ui/pipe_inventory.coffee.
+  do ->
+    invStatus = ctx.ipcStatus
+    inv       = ctx.pipeInventory
+    return unless invStatus? and inv?.INVENTORY_BASH?
+    {execSync} = require 'child_process'
+    os = require 'os'
+    hostSlug = os.hostname().toLowerCase().split('.')[0].replace(/[^a-z0-9_\-]/g, '-')
+    INVENTORY_INTERVAL_MS = 30 * 1000
+    publishInventory = ->
+      try
+        raw   = execSync 'bash -s', input: inv.INVENTORY_BASH, encoding: 'utf8', timeout: 15000, maxBuffer: 16 * 1024 * 1024
+        pipes = inv.parse raw
+        await invStatus.memoRequest 'put',
+          key:   "sys/pipe_inventory/#{hostSlug}"
+          value: {host: os.hostname(), generated_at: Date.now(), pipes: pipes}
+      catch err
+        console.error "[inventory] publish failed: #{err?.message ? err}" if process.env.IPC_DEBUG
+      return
+    # First publish a few seconds after boot (broker connect needs a
+    # beat), then steady cadence. unref so the timers never hold the
+    # process open.
+    t0 = setTimeout publishInventory, 5000
+    t1 = setInterval publishInventory, INVENTORY_INTERVAL_MS
+    t0.unref?()
+    t1.unref?()
+    return
+
   # ── /pipe/<name> and /?pipe=<name> deep links ───────────────
   # Puppeteer's peer_pipes panel links to writer pipes via these URLs.
   # Returns a "switching..." HTML page that reloads to `/` after 3s,
