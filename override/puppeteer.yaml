@@ -1,0 +1,12 @@
+# writer/override/puppeteer.yaml — octopus node config (MARRIAGE.md).
+#
+# This node is a PUPPET: the same writer UI as always, on ui_port. Once
+# Stage A(b)/B land it comes up as a broker CLIENT of its controlling
+# puppeteer over the SSH/MQTT link instead of hosting its own broker.
+# In Stage B the controller WRITES this file at SSH-launch to hand the
+# puppet its assigned port; the static copy here is the standalone default.
+#
+# Read by ui_server at boot for `role` + `ui_port`.
+puppeteer:
+  role: puppet
+  ui_port: 4311

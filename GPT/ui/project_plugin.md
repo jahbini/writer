@@ -15,6 +15,21 @@ when launched from `~/writer`.
 - **Old file**: `~/writer/ui_server.coffee` is still on disk pending
   deletion. No launcher references it after the cutover.
 
+## Inventory publisher (MARRIAGE Stage B, 2026-10-25)
+
+`init` starts a 30 s timer (an IIFE near the top, guarded on
+`ctx.ipcStatus` + `ctx.pipeInventory`) that scans **this host's** writer
+pipes LOCALLY via the shared `ctx.pipeInventory.INVENTORY_BASH`
+(`execSync 'bash -s'`) and publishes the parsed snapshot to the memo key
+`sys/pipe_inventory/<host>` as `{host, generated_at, pipes:[…]}`. This is
+the writer-as-puppet **announcing its own inventory** so the puppeteer
+controller reads it instead of SSH-scanning this host (gated on
+`sys/peer_via_broker`; SSH fallback kept — see `[[puppeteer_project_plugin]]`).
+Cheap because it's local I/O (no SSH); degrades to a no-op when the
+broker is unavailable (`memoRequest` rejects → caught → retry next tick).
+Timers are `unref`'d. Canonical scan: `pipeline/ui/pipe_inventory.coffee`.
+Verified: `~/claude_zone/test/stage_b_inventory_publish.coffee`.
+
 ## What the plugin exports
 
 ```coffee
