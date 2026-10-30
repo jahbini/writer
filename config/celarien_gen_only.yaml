@@ -1,0 +1,29 @@
+# =====================================================================
+#   celarien_gen_only.yaml — peer generate step, standalone
+# =====================================================================
+#
+#   Runs ONLY celarien_generate_ite against a pushed directives file —
+#   no audit, no fan-out. For demonstrating the 4B peer generating from
+#   LEPA-steered directives (use_lepa_steer + quantized_model_dir come
+#   from control_override at launch). Bounded to a couple of chapters.
+
+run:
+  output_dir: out
+  data_dir:   data
+
+artifacts:
+  celarien_directives_jsonl:
+    source: out/celarien_directives.jsonl
+  celarien_chapter_actuals_json:
+    target: out/celarien_chapter_actuals.yaml
+
+celarien_generate_ite:
+  run: celarien_generate_ite.coffee
+  depends_on: []
+  needs: [celarien_directives_jsonl]
+  makes: [celarien_chapter_actuals_json]
+  use_celarien_arc: true
+  temperature: 0.85
+  top_p: 0.9
+  max_tokens: 900
+  max_chapters: 2

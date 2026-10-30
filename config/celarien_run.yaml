@@ -6,8 +6,8 @@
 #   pushed by the puppeteer's celarien_prep recipe (celarien_fanout_ite
 #   step):
 #
-#     <CWD>/params/celarien_directives.jsonl
-#     <CWD>/params/celarien_filled_arc.yaml
+#     <CWD>/out/celarien_directives.jsonl
+#     <CWD>/out/celarien_filled_arc.yaml
 #
 #   Then runs:
 #     celarien_generate_ite    → per-chapter actuals (LLM generation)
@@ -35,9 +35,9 @@ artifacts:
   # paths, so peer steps read via the same L.need keys the puppeteer
   # uses (celarien_directives_jsonl / celarien_filled_arc_json).
   celarien_directives_jsonl:
-    source: params/celarien_directives.jsonl
+    source: out/celarien_directives.jsonl
   celarien_filled_arc_json:
-    source: params/celarien_filled_arc.yaml
+    source: out/celarien_filled_arc.yaml
 
   # Peer outputs.
   celarien_chapter_actuals_json:
